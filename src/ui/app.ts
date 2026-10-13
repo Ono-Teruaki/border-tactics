@@ -1,16 +1,24 @@
 import { AI_PRESETS, CPU_COMPS, decideOrders } from '../engine/ai.ts'
-import { attackRange, canFireAfterMove, canSee, canStrike, classOf, createGame, gameResult, observe, reachableFor, resolveTurn } from '../engine/game.ts'
+import { attackRange, canFireAfterMove, canSee, canStrike, classOf, createGame, gameResult, observe, reachableFor, resolveTurn, strikeCheck } from '../engine/game.ts'
 import { allPositions, key, samePos, terrainId } from '../engine/grid.ts'
 import { MAPS } from '../engine/maps.ts'
 import { RECORD_VERSION, type GameRecord } from '../engine/record.ts'
 import { seedStreams, type Rng } from '../engine/rng.ts'
 import { DEFAULT_RULES } from '../engine/rules.ts'
-import type { GameEvent, GameState, Intel, MapDef, Order, Pos, Unit, VictoryMode } from '../engine/types.ts'
+import type { GameEvent, GameState, Intel, MapDef, Order, Pos, StrikeBlock, Unit, VictoryMode } from '../engine/types.ts'
 import { Board3D, type PieceSpec, type PlanSpec, type TileMark } from './board3d.ts'
 
 const rules = DEFAULT_RULES
 const root = document.querySelector<HTMLDivElement>('#app')!
 const MODE_LABEL: Record<VictoryMode, string> = { annihilation: '全滅', killCount: '撃破数', killCost: '撃破コスト' }
+const BLOCK_LABEL: Record<StrikeBlock, string> = {
+  range: '射程外',
+  blocked: '射線上にビル',
+  cover: '遮蔽（ビルに張り付き）',
+  moved: '移動しすぎ',
+  unseen: '見失った',
+  gone: '既に撃破',
+}
 
 const h = (tag: string, attrs: Record<string, any> = {}, ...children: (Node | string | null | false)[]) => {
   const el = document.createElement(tag)
@@ -46,7 +54,7 @@ export function showSetup() {
           'div',
           { class: 'slots' },
           ...Array.from({ length: rules.teamSize }, (_, i) =>
-            h('button', { class: 'slot', onclick: () => (comp.splice(i, 1), render()) }, comp[i] ? h('span', { class: 'koma' }, rules.classes[comp[i]].kanji) : '＋'),
+            h('button', { class: 'slot', onclick: () => (comp.splice(i, 1), render()) }, comp[i] ? h('span', { class: 'pico' }, rules.classes[comp[i]].short) : '＋'),
           ),
         ),
         h(
@@ -56,7 +64,7 @@ export function showSetup() {
             h(
               'button',
               { class: 'classcard', onclick: () => (comp.length < rules.teamSize && comp.push(c.id), render()) },
-              h('span', { class: 'koma' }, c.kanji),
+              h('span', { class: 'pico' }, c.short),
               h('b', {}, c.name),
               h('small', {}, `HP${c.hp} 移${c.move} 射${c.range} 攻${c.damage} 視${c.vision} コスト${c.cost}${c.attackMaxMove < 10 ? ` ※${c.attackMaxMove + 1}マス以上動くと撃てない` : ''}`),
             ),
@@ -95,11 +103,13 @@ function showHelp() {
       h(
         'ul',
         {},
-        h('li', {}, '両軍が同時に「移動先」を決め、一斉に動きます。'),
-        h('li', {}, '移動後、射程内で「味方の誰かに見えている」敵を自動で撃ちます。偵察で見つけた敵を後衛が撃てます。'),
+        h('li', {}, '両軍が同時に「移動先」と「狙う敵」を決め、一斉に動きます。'),
+        h('li', {}, '狙う敵は、今見えている敵から選びます。移動後にその敵が射程内・射線が通っていて、味方の誰かに見えていれば命中します。偵察で見つけた敵を後衛が撃てます。'),
+        h('li', {}, '遮蔽: 射線上にビルがあると撃てません（屋上からでも）。屋上から、こちら側の壁に張り付いている地上の敵は撃てません。'),
         h('li', {}, 'ダメージは同時に入ります（相打ちあり）。撃ったユニットは位置が相手にバレます。'),
         h('li', {}, '同じマスに入ろうとすると弾かれて元の位置に戻ります。敵とぶつかると互いの位置がバレます。'),
-        h('li', {}, 'ビル: 地上の視線を遮る。登ると（移動コスト2）視界+2・射程+1、ビル越しに見通せる。'),
+        h('li', {}, 'ビル: 地上の視線を遮る。登ると（移動コスト2）視界+2・射程+1、ビル越しに「見る」ことはできる。'),
+        h('li', {}, '盤面: ピンチ / ホイール / ＋－ボタンでズーム、ズーム中はドラッグで移動。'),
         h('li', {}, 'スナイパーは2マス以上動いたターンは撃てません（矢印が橙色になります）。'),
         h('li', {}, `勝敗: ${rules.turnLimit}手終了時の撃破コスト合計（全滅で即終了）。`),
         h('li', {}, '見えていない敵は「最後に見た位置」が半透明の駒で表示されます。'),
@@ -146,7 +156,15 @@ class Battle {
     root.replaceChildren(h('div', { class: 'battle' }, this.header, stage, this.panel, this.logEl))
     this.board = new Board3D(stage, map)
     this.board.onTap = (p) => this.tap(p)
-    ;(window as any).__bt = { tileToScreen: (x: number, y: number) => this.board.tileToScreen({ x, y }), battle: this }
+    // デバッグ用（自動テストから使う）
+    ;(window as any).__bt = {
+      tileToScreen: (x: number, y: number) => this.board.tileToScreen({ x, y }),
+      battle: this,
+      autoPlan: () => {
+        for (const o of decideOrders(observe(this.state, 0), seedStreams(this.state.turn).ai, AI_PRESETS.cpu)) this.orders.set(o.unitId, o)
+        this.render()
+      },
+    }
 
     this.log(`敵編成: ${comps[1].map((c) => rules.classes[c].name).join('・')}`)
     this.render()
@@ -157,6 +175,20 @@ class Battle {
   }
   destOf(u: Unit): Pos {
     return this.orders.get(u.id)?.dest ?? u.pos
+  }
+
+  targetIntel(u: Unit): Intel | undefined {
+    const id = this.orders.get(u.id)?.target
+    return id ? this.shownIntel[id] : undefined
+  }
+
+  /** 敵がその場に留まった場合に、移動先から撃てるかの予測 */
+  predictBlock(u: Unit): StrikeBlock | null {
+    const t = this.targetIntel(u)
+    if (!t) return null
+    const d = this.destOf(u)
+    if (!canFireAfterMove(rules, u, d)) return 'moved'
+    return strikeCheck(this.map, rules, d, t.pos, attackRange(this.map, rules, u.cls, d))
   }
 
   log(s: string) {
@@ -176,10 +208,17 @@ class Battle {
         else this.selected = null
         return this.render()
       }
+      // 見えている敵をタップ → 狙う（もう一度で解除）
+      const enemy = Object.values(this.shownIntel).find((i) => i.visible && samePos(i.pos, p))
+      if (enemy) {
+        const cur = this.orders.get(sel.id)
+        this.orders.set(sel.id, { unitId: sel.id, dest: this.destOf(sel), target: cur?.target === enemy.unitId ? undefined : enemy.unitId })
+        return this.render()
+      }
       const reach = reachableFor(this.map, rules, sel)
       const plannedHere = mine.some((u) => u.id !== sel.id && samePos(this.destOf(u), p))
       if (reach.has(key(p)) && !plannedHere) {
-        this.orders.set(sel.id, { unitId: sel.id, dest: p })
+        this.orders.set(sel.id, { unitId: sel.id, dest: p, target: this.orders.get(sel.id)?.target })
         return this.render()
       }
     }
@@ -193,16 +232,19 @@ class Battle {
     for (const u of s.units) {
       if (u.side !== 0 || (!u.alive && !hpOverride?.has(u.id))) continue
       const c = classOf(rules, u)
-      specs.push({ id: u.id, side: 0, kanji: c.kanji, hp: hpOverride?.get(u.id) ?? u.hp, maxHp: c.hp, pos: u.pos, selected: u.id === this.selected })
+      specs.push({ id: u.id, side: 0, cls: u.cls, letter: c.short, hp: hpOverride?.get(u.id) ?? u.hp, maxHp: c.hp, pos: u.pos, selected: u.id === this.selected })
     }
     // 敵は intel（自軍から分かっている情報）だけから描く
+    const selTarget = this.selected ? this.orders.get(this.selected)?.target : undefined
     for (const i of Object.values(intel)) {
       const c = rules.classes[i.cls]
       const age = s.turn - 1 - i.turn
       specs.push({
         id: i.unitId,
         side: 1,
-        kanji: c.kanji,
+        cls: i.cls,
+        letter: c.short,
+        targeted: !hpOverride && i.unitId === selTarget,
         hp: i.visible ? i.hp : null,
         maxHp: c.hp,
         pos: i.pos,
@@ -223,7 +265,13 @@ class Battle {
       h('span', {}, `${Math.min(s.turn, rules.turnLimit)}手目 / ${rules.turnLimit}`),
       h('span', { class: 'score' }, h('b', { class: 'c-me' }, String(s.killCost[0])), ' - ', h('b', { class: 'c-en' }, String(s.killCost[1]))),
       h('span', {}, `敵残 ${s.units.filter((u) => u.alive && u.side === 1).length}`),
-      h('button', { class: 'mini', onclick: (e: Event) => ((e.target as HTMLElement).textContent = this.board.cycleView()) }, '視点'),
+      h(
+        'span',
+        { class: 'zoom' },
+        h('button', { class: 'mini', onclick: () => this.board.zoomBy(1 / 1.3) }, '－'),
+        h('button', { class: 'mini', onclick: () => this.board.zoomBy(1.3) }, '＋'),
+        h('button', { class: 'mini', onclick: (e: Event) => ((e.target as HTMLElement).textContent = this.board.cycleView()) }, '視点'),
+      ),
       h('button', { class: 'mini', onclick: showHelp }, '?'),
     )
 
@@ -259,7 +307,16 @@ class Battle {
     const plans: PlanSpec[] = []
     for (const u of mine) {
       const d = this.destOf(u)
-      if (!samePos(d, u.pos)) plans.push({ id: u.id, from: u.pos, to: d, side: 0, kanji: classOf(rules, u).kanji, warn: !canFireAfterMove(rules, u, d) })
+      const t = this.targetIntel(u)
+      plans.push({
+        id: u.id,
+        cls: u.cls,
+        from: u.pos,
+        to: d,
+        warn: !!t && !canFireAfterMove(rules, u, d),
+        target: t?.pos,
+        targetOk: !!t && this.predictBlock(u) === null,
+      })
     }
     this.board.setPlans(plans)
     this.renderPanel()
@@ -273,17 +330,25 @@ class Battle {
       const c = classOf(rules, sel)
       const dest = this.destOf(sel)
       const onRoof = terrainId(this.map, dest) === 'building'
-      const warn = !canFireAfterMove(rules, sel, dest)
+      const t = this.targetIntel(sel)
+      const block = this.predictBlock(sel)
+      const visibleEnemies = Object.values(this.shownIntel).some((i) => i.visible)
       children.push(
-        h('div', { class: 'info' }, h('span', { class: 'koma small' }, c.kanji), h('b', {}, ` ${c.name}`), ` HP${sel.hp}/${c.hp} 移${c.move} 射${c.range} 視${c.vision}`),
+        h('div', { class: 'info' }, h('span', { class: 'pico small' }, c.short), h('b', {}, ` ${c.name}`), ` HP${sel.hp}/${c.hp} 移${c.move} 射${c.range}${onRoof ? '+1' : ''} 視${c.vision}${onRoof ? '+2' : ''}`),
         h(
           'div',
-          { class: `hint ${warn ? 'warn' : ''}` },
-          warn ? '⚠ この移動では撃てません（スナイパーは1マスまで）' : `青=移動先候補 / 赤=移動後の射程${onRoof ? '（屋上ボーナス込み）' : ''}。駒を再タップで取り消し`,
+          { class: `hint ${t && block ? 'warn' : ''}` },
+          t
+            ? block
+              ? `狙い: 敵${rules.classes[t.cls].name} — 今の位置のままだと「${BLOCK_LABEL[block]}」`
+              : `狙い: 敵${rules.classes[t.cls].name} — 今の位置のままなら命中`
+            : visibleEnemies
+              ? '移動先（青）をタップ → 狙う敵（赤い駒）をタップ。狙わなければ撃ちません'
+              : '移動先（青）をタップ。敵が見えていないので狙えません',
         ),
       )
     } else {
-      children.push(h('div', { class: 'hint' }, '自分の駒をタップして移動先を選択。命令しない駒はその場に留まります。射撃は自動です。'))
+      children.push(h('div', { class: 'hint' }, '自分の駒をタップ → 移動先 → 狙う敵 を選んで「実行」。命令しない駒はその場に留まります。'))
     }
     children.push(
       h(
@@ -300,7 +365,7 @@ class Battle {
     if (this.busy || this.state.over) return
     this.busy = true
     this.selected = null
-    const myOrders = this.me().map((u) => ({ unitId: u.id, dest: { ...this.destOf(u) } }))
+    const myOrders: Order[] = this.me().map((u) => ({ unitId: u.id, dest: { ...this.destOf(u) }, target: this.orders.get(u.id)?.target }))
     const cpuOrders = decideOrders(observe(this.state, 1), this.aiRng, AI_PRESETS.cpu)
     this.turns.push([structuredClone(myOrders), structuredClone(cpuOrders)])
     const hpBefore = new Map(this.state.units.filter((u) => u.side === 0).map((u) => [u.id, u.hp]))
@@ -309,6 +374,7 @@ class Battle {
     const events = resolveTurn(this.state, [myOrders, cpuOrders], this.resolveRng)
     this.orders.clear()
     this.board.setPlans([])
+    const turnEvents = events
     this.board.setMarks(new Map())
     this.panel.replaceChildren(h('div', { class: 'hint' }, '解決中…'))
 
@@ -323,7 +389,13 @@ class Battle {
     }
     await this.board.syncPieces(this.pieceSpecs(midIntel, hpBefore), true)
 
-    // ② 射撃
+    // ② 射撃（自軍の不発は理由を表示）
+    for (const e of turnEvents) {
+      if (e.type === 'noshot' && e.unitId.startsWith('0-')) {
+        const u = this.state.units.find((x) => x.id === e.unitId)!
+        this.board.popup(u.pos, `× ${BLOCK_LABEL[e.reason]}`, '#c07a00', 1000)
+      }
+    }
     const shots = events.filter((e): e is Extract<GameEvent, { type: 'attack' }> => e.type === 'attack')
     if (shots.length) {
       await Promise.all(
@@ -354,6 +426,7 @@ class Battle {
     for (const e of events) {
       const u = this.state.units.find((x) => x.id === e.unitId)!
       if (e.type === 'bounce' && (u.side === 0 || e.contact)) lines.push(`${this.name(e.unitId)}: 移動を阻まれた${e.contact ? '（敵と接触！）' : ''}`)
+      if (e.type === 'noshot' && u.side === 0) lines.push(`${this.name(e.unitId)}: 撃てず（${BLOCK_LABEL[e.reason]}）`)
       if (e.type === 'attack') lines.push(`${this.name(e.unitId)} → ${this.name(e.hitId)} に命中 -${e.damage}${e.spotted && u.side === 0 ? '（味方の索敵）' : ''}`)
       if (e.type === 'bailout') lines.push(`💥 ${this.name(e.unitId)} ベイルアウト`)
     }

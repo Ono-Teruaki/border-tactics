@@ -1,6 +1,6 @@
-import { dist, key, lineOfSight, reachable, samePos, terrain } from './grid.ts'
+import { dist, inBounds, key, lineOfSight, reachable, samePos, terrain, terrainId } from './grid.ts'
 import type { Rng } from './rng.ts'
-import type { GameEvent, GameResult, GameState, MapDef, Observation, Order, Pos, RulesConfig, Side, Unit, UnitClass, VictoryMode } from './types.ts'
+import type { GameEvent, GameResult, GameState, MapDef, Observation, Order, Pos, RulesConfig, Side, StrikeBlock, Unit, UnitClass, VictoryMode } from './types.ts'
 
 export function createGame(map: MapDef, rules: RulesConfig, comps: [string[], string[]]): GameState {
   const units: Unit[] = []
@@ -38,10 +38,32 @@ export function canSee(map: MapDef, rules: RulesConfig, cls: string, at: Pos, ta
   return lineOfSight(map, rules, at, target, terrain(map, rules, at).seesOverBlockers)
 }
 
-/** 射程と射線が通るか */
+/**
+ * 射撃の可否（射程・射線・遮蔽）。視界とは別物:
+ * - 射線上にビルがあれば撃てない（屋上からでも。fireOverBuildings で緩和）
+ * - 屋上から、撃ち手側のビルに張り付いている地上の敵は撃てない（真下は狙えない）
+ */
+export function strikeCheck(map: MapDef, rules: RulesConfig, at: Pos, target: Pos, range: number): StrikeBlock | null {
+  if (dist(at, target) > range) return 'range'
+  const fromRoof = terrainId(map, at) === 'building'
+  if (!lineOfSight(map, rules, at, target, fromRoof && rules.cover.fireOverBuildings)) return 'blocked'
+  if (rules.cover.wallHug && fromRoof && isWallHugging(map, at, target)) return 'cover'
+  return null
+}
+
 export function canStrike(map: MapDef, rules: RulesConfig, at: Pos, target: Pos, range: number): boolean {
-  if (dist(at, target) > range) return false
-  return lineOfSight(map, rules, at, target, terrain(map, rules, at).seesOverBlockers)
+  return strikeCheck(map, rules, at, target, range) === null
+}
+
+/** target（地上）が、撃ち手 from の方向に面したビルに張り付いているか（主方向の隣接マスがビル） */
+export function isWallHugging(map: MapDef, from: Pos, target: Pos): boolean {
+  if (terrainId(map, target) === 'building') return false
+  const dx = from.x - target.x
+  const dy = from.y - target.y
+  const sides: Pos[] = []
+  if (Math.abs(dx) >= Math.abs(dy) && dx !== 0) sides.push({ x: target.x + Math.sign(dx), y: target.y })
+  if (Math.abs(dy) >= Math.abs(dx) && dy !== 0) sides.push({ x: target.x, y: target.y + Math.sign(dy) })
+  return sides.some((n) => inBounds(map, n) && terrainId(map, n) === 'building')
 }
 
 export function visibleEnemyIds(state: GameState, side: Side): Set<string> {
@@ -96,12 +118,11 @@ function reveal(state: GameState, toSide: Side, u: Unit, turn: number) {
  * 1ターンを同時解決する（state を直接更新）。
  * 1) 移動: 全員が同時に目的地へ。同じマスに複数が来たら、移動してきた側が元の位置へ弾かれる（連鎖も解決）。
  *    すれ違い・入れ替わりは許可（経路は問わない）。
- * 2) 自動攻撃: 移動後、射程・射線内にいて「見えている」敵を撃つ（sharedTargeting なら味方の視界も使える）。
- *    標的: 撃破できる敵 > 残りHPが少ない敵 > コストが高い敵 > 近い敵。既に倒しきれる敵には重ねない。
- *    射程の短いユニットから標的を決める（選択肢が少ない順）。ダメージはまとめて適用（相打ちあり）。
+ * 2) 射撃: 命令で指定した敵が、移動後に見えていて（sharedTargeting なら味方の視界でも可）
+ *    射程・射線・遮蔽をクリアしていれば命中。ダメージはまとめて適用（相打ちあり）。
  * 3) HP0 はベイルアウト。攻撃した位置は相手に露見。
  */
-export function resolveTurn(state: GameState, orders: [Order[], Order[]], rng: Rng): GameEvent[] {
+export function resolveTurn(state: GameState, orders: [Order[], Order[]], _rng: Rng): GameEvent[] {
   if (state.over) return []
   const { map, rules } = state
   const events: GameEvent[] = []
@@ -149,34 +170,26 @@ export function resolveTurn(state: GameState, orders: [Order[], Order[]], rng: R
     for (const u of alive) if (contact.has(u.id)) reveal(state, (1 - u.side) as Side, u, state.turn)
   }
 
-  // --- 自動攻撃（同時） ---
+  // --- 射撃（同時）: 指定した敵が移動後に見えていて、射程・射線・遮蔽をクリアしていれば命中 ---
   const teamVis: [Set<string>, Set<string>] = [visibleEnemyIds(state, 0), visibleEnemyIds(state, 1)]
   const assigned = new Map<string, number>()
   const attackers: Unit[] = []
-  const shooters = rng.shuffle([...alive]).sort((a, b) => attackRange(map, rules, a.cls, a.pos) - attackRange(map, rules, b.cls, b.pos))
-  for (const u of shooters) {
+  for (const u of alive) {
+    const targetId = orders[u.side].find((x) => x.unitId === u.id)?.target
+    if (!targetId) continue
+    const t = alive.find((e) => e.id === targetId && e.side !== u.side)
     const cls = classOf(rules, u)
-    if (dist(origin.get(u.id)!, u.pos) > cls.attackMaxMove) continue
-    const ar = attackRange(map, rules, u.cls, u.pos)
-    const cands = alive.filter((e) => {
-      if (e.side === u.side) return false
-      if (e.hp - (assigned.get(e.id) ?? 0) <= 0) return false
-      const seen = rules.sharedTargeting ? teamVis[u.side].has(e.id) : canSee(map, rules, u.cls, u.pos, e.pos)
-      return seen && canStrike(map, rules, u.pos, e.pos, ar)
-    })
-    if (!cands.length) continue
-    const rem = (e: Unit) => e.hp - (assigned.get(e.id) ?? 0)
-    cands.sort(
-      (a, b) =>
-        Number(rem(b) <= cls.damage) - Number(rem(a) <= cls.damage) ||
-        rem(a) - rem(b) ||
-        classOf(rules, b).cost - classOf(rules, a).cost ||
-        dist(u.pos, a.pos) - dist(u.pos, b.pos),
-    )
-    const v = cands[0]
-    assigned.set(v.id, (assigned.get(v.id) ?? 0) + cls.damage)
-    const spotted = !canSee(map, rules, u.cls, u.pos, v.pos)
-    events.push({ type: 'attack', unitId: u.id, from: { ...u.pos }, target: { ...v.pos }, hitId: v.id, damage: cls.damage, spotted })
+    let reason: StrikeBlock | null = null
+    if (!t) reason = 'gone'
+    else if (dist(origin.get(u.id)!, u.pos) > cls.attackMaxMove) reason = 'moved'
+    else if (!(rules.sharedTargeting ? teamVis[u.side].has(t.id) : canSee(map, rules, u.cls, u.pos, t.pos))) reason = 'unseen'
+    else reason = strikeCheck(map, rules, u.pos, t.pos, attackRange(map, rules, u.cls, u.pos))
+    if (reason || !t) {
+      events.push({ type: 'noshot', unitId: u.id, targetId, reason: reason ?? 'gone' })
+      continue
+    }
+    assigned.set(t.id, (assigned.get(t.id) ?? 0) + cls.damage)
+    events.push({ type: 'attack', unitId: u.id, from: { ...u.pos }, target: { ...t.pos }, hitId: t.id, damage: cls.damage, spotted: !canSee(map, rules, u.cls, u.pos, t.pos) })
     attackers.push(u)
   }
   for (const [id, dmg] of assigned) state.units.find((u) => u.id === id)!.hp -= dmg

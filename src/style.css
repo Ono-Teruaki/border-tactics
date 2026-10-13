@@ -1,16 +1,12 @@
 :root {
-  color-scheme: dark;
-  --bg: #0d1117;
-  --panel: #161b22;
-  --line: #30363d;
-  --text: #e6edf3;
-  --muted: #8b949e;
-  --me: #4aa3ff;
-  --en: #ff5d5d;
-  --plain: #2a3340;
-  --wall: #0a0d12;
-  --forest: #1f4a2c;
-  --high: #6b5a35;
+  color-scheme: light;
+  --bg: #f4f6f9;
+  --panel: #ffffff;
+  --line: #dde2e9;
+  --text: #1d2330;
+  --muted: #6b7480;
+  --me: #2f6fec;
+  --en: #e0443e;
   font-family: system-ui, -apple-system, 'Hiragino Sans', sans-serif;
   background: var(--bg);
   color: var(--text);
@@ -63,7 +59,8 @@ button:disabled {
 }
 .chip.on {
   border-color: var(--me);
-  background: #1d3550;
+  background: #e8f0fe;
+  color: var(--me);
 }
 .sub {
   color: var(--muted);
@@ -122,31 +119,22 @@ button:disabled {
   align-items: center;
   column-gap: 10px;
 }
-.classcard .koma {
+.classcard .pico {
   grid-row: span 2;
 }
 .classcard small {
   color: var(--muted);
 }
-.tok {
-  display: inline-grid;
-  place-items: center;
-  width: 34px;
-  height: 34px;
-  border-radius: 50%;
-  font-weight: 800;
+.minimap {
+  background: #c3cad4;
+  padding: 1px;
+  border-radius: 4px;
 }
-.tok.me {
-  background: var(--me);
-  color: #fff;
-}
-
-/* 地形（ミニマップ） */
 .t-plain {
-  background: #e2b46a;
+  background: #f7f8fa;
 }
 .t-building {
-  background: #59626c;
+  background: #8fa6c2;
 }
 .minimap i.s-me {
   box-shadow: inset 0 0 0 3px var(--me);
@@ -154,22 +142,22 @@ button:disabled {
 .minimap i.s-en {
   box-shadow: inset 0 0 0 3px var(--en);
 }
-.koma {
+.pico {
   display: inline-grid;
   place-items: center;
-  width: 30px;
-  height: 36px;
-  clip-path: polygon(50% 0, 90% 22%, 100% 100%, 0 100%, 10% 22%);
-  background: linear-gradient(160deg, #f3d49a, #d9a95b);
-  color: #1b1b1b;
-  font: 900 18px 'Hiragino Mincho ProN', 'Yu Mincho', serif;
-  padding-top: 4px;
-  box-sizing: border-box;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: #fff;
+  border: 2px solid var(--me);
+  color: var(--text);
+  font-weight: 800;
+  box-shadow: 0 1px 3px rgba(20, 30, 50, 0.15);
 }
-.koma.small {
+.pico.small {
   width: 22px;
-  height: 26px;
-  font-size: 13px;
+  height: 22px;
+  font-size: 12px;
   vertical-align: middle;
 }
 
@@ -208,7 +196,17 @@ button:disabled {
   touch-action: none;
 }
 .hint.warn {
-  color: #ffb020;
+  color: #c07a00;
+}
+.zoom {
+  display: inline-flex;
+  gap: 4px;
+}
+.panel,
+.sheet,
+.classcard,
+.slot {
+  box-shadow: 0 1px 4px rgba(20, 30, 50, 0.06);
 }
 .panel {
   background: var(--panel);
@@ -234,7 +232,7 @@ button:disabled {
 .modal {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.6);
+  background: rgba(20, 30, 50, 0.35);
   display: grid;
   place-items: end center;
   z-index: 10;

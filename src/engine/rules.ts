@@ -16,6 +16,7 @@ export const DEFAULT_RULES: RulesConfig = {
     building: { name: 'ビル', passable: true, moveCost: 2, blocksLos: true, visionBonus: 2, rangeBonus: 1, seesOverBlockers: true },
   },
   sharedTargeting: true,
+  cover: { fireOverBuildings: false, wallHug: true },
   attackReveals: true,
   bumpReveals: true,
 }

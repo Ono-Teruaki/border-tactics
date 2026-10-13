@@ -46,7 +46,12 @@ interface Known extends Intel {
 export function decideOrders(obs: Observation, rng: Rng, params: AiParams): Order[] {
   const { map, rules } = obs
   if (params.random) {
-    return obs.mine.map((u) => ({ unitId: u.id, dest: rng.pick([...reachable(map, rules, u.pos, classOf(rules, u).move).values()]).pos }))
+    const seen = obs.enemies.filter((e) => e.visible)
+    return obs.mine.map((u) => ({
+      unitId: u.id,
+      dest: rng.pick([...reachable(map, rules, u.pos, classOf(rules, u).move).values()]).pos,
+      target: seen.length ? rng.pick(seen).unitId : undefined,
+    }))
   }
   const known: Known[] = obs.enemies
     .map((e) => ({ ...e, age: e.visible ? 0 : obs.turn - e.turn }))
@@ -56,21 +61,21 @@ export function decideOrders(obs: Observation, rng: Rng, params: AiParams): Orde
   // 射程の長いユニットから決める（良い位置を先に取る）
   const units = [...obs.mine].sort((a, b) => classOf(rules, b).range - classOf(rules, a).range)
   for (const u of units) {
-    const dest = bestDest(obs, u, known, reserved, rng, params)
-    reserved.add(key(dest))
-    orders.push({ unitId: u.id, dest })
+    const o = bestOrder(obs, u, known, reserved, rng, params)
+    reserved.add(key(o.dest))
+    orders.push(o)
   }
   return orders
 }
 
-function bestDest(obs: Observation, u: Unit, known: Known[], reserved: Set<string>, rng: Rng, p: AiParams): Pos {
+function bestOrder(obs: Observation, u: Unit, known: Known[], reserved: Set<string>, rng: Rng, p: AiParams): Order {
   const { map, rules } = obs
   const cls = classOf(rules, u)
   const threats = known.filter((e) => e.age <= 2)
   const ideal = cls.range > 1 ? cls.range : cls.vision >= 6 ? cls.vision - 2 : 1
   const isScout = cls.vision >= 6
 
-  let best: { score: number; pos: Pos } | null = null
+  let best: { score: number; pos: Pos; target?: string } | null = null
   for (const { pos } of reachable(map, rules, u.pos, cls.move).values()) {
     if (reserved.has(key(pos))) continue
     const t = terrain(map, rules, pos)
@@ -79,13 +84,15 @@ function bestDest(obs: Observation, u: Unit, known: Known[], reserved: Set<strin
 
     // 射撃機会：最近見た敵がその場に留まると仮定
     let fire = 0
+    let target: string | undefined
     if (canFire) {
       for (const e of known) {
-        if (e.age > 1) continue
+        if (e.age > 0) continue
         if (!canStrike(map, rules, pos, e.pos, ar)) continue
         const ec = classOf(rules, e)
         const kill = (e.hp ?? ec.hp) <= cls.damage ? 1 + ec.cost * 0.5 : 1
-        fire = Math.max(fire, cls.damage * kill * (e.age === 0 ? 0.6 : 0.3))
+        const v = cls.damage * kill * 0.6
+        if (v > fire) (fire = v), (target = e.unitId)
       }
     }
 
@@ -109,7 +116,14 @@ function bestDest(obs: Observation, u: Unit, known: Known[], reserved: Set<strin
     const roof = t.visionBonus > 0 && (cls.range > 1 || isScout) ? 1 + visionRange(map, rules, u.cls, pos) * 0.05 : 0
     const score =
       p.aggression * (fire * 1.5 + progress) - p.caution * threat * 0.6 + p.scouting * scout + p.roofPref * roof + rng.next() * p.noise
-    if (!best || score > best.score) best = { score, pos }
+    if (!best || score > best.score) best = { score, pos, target }
   }
-  return best?.pos ?? { ...u.pos }
+  const dest = best?.pos ?? { ...u.pos }
+  // 射程内に見込みがなければ、最も近い視認中の敵を狙っておく（相手が寄ってくれば当たる）
+  let target = best?.target
+  if (!target) {
+    const vis = known.filter((e) => e.age === 0).sort((a, b) => dist(dest, a.pos) - dist(dest, b.pos))
+    target = vis[0]?.unitId
+  }
+  return { unitId: u.id, dest, target }
 }

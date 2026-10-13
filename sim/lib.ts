@@ -22,6 +22,8 @@ export interface MatchStats extends GameResult {
   firstContact: [number | null, number | null]
   /** 敵を1体以上視認できていたターンの割合 */
   visibleShare: [number, number]
+  /** 狙ったが撃てなかった理由の内訳 */
+  noshot: Record<string, number>
 }
 
 export function playMatch(map: MapDef, rules: RulesConfig, comps: [string[], string[]], ais: [AiParams, AiParams], seed: number): MatchStats {
@@ -34,6 +36,7 @@ export function playMatch(map: MapDef, rules: RulesConfig, comps: [string[], str
   const spottedAttacks = z(), spottedKills = z(), roofAttacks = z(), roofKills = z()
   const roofUnitTurns = z(), unitTurns = z(), visTurns = z()
   const firstContact: [number | null, number | null] = [null, null]
+  const noshot: Record<string, number> = {}
   const byId = new Map(g.units.map((u) => [u.id, u]))
   while (!g.over) {
     const orders = ([0, 1] as Side[]).map((s) => decideOrders(observe(g, s), rng, ais[s])) as [any, any]
@@ -49,6 +52,7 @@ export function playMatch(map: MapDef, rules: RulesConfig, comps: [string[], str
         if (roof) roofAttacks[u.side]++
         killer.set(e.hitId, { cls: u.cls, spotted: e.spotted, roof })
       }
+      if (e.type === 'noshot') noshot[e.reason] = (noshot[e.reason] ?? 0) + 1
       if (e.type === 'bailout') {
         const v = byId.get(e.unitId)!
         const k = killer.get(v.id)
@@ -84,6 +88,7 @@ export function playMatch(map: MapDef, rules: RulesConfig, comps: [string[], str
     roofOccupancy: [roofUnitTurns[0] / Math.max(1, unitTurns[0]), roofUnitTurns[1] / Math.max(1, unitTurns[1])],
     firstContact,
     visibleShare: [visTurns[0] / turns, visTurns[1] / turns],
+    noshot,
   }
 }
 

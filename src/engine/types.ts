@@ -44,6 +44,12 @@ export interface RulesConfig {
   terrain: Record<TerrainId, TerrainRule>
   /** true: 味方の誰かが見ている敵を撃てる（索敵が射撃に直結） / false: 自分の目で見えている敵のみ */
   sharedTargeting: boolean
+  cover: {
+    /** 屋上からならビル越しに撃てる（false: 射線上にビルがあれば撃てない。視界は通る） */
+    fireOverBuildings: boolean
+    /** 屋上から、撃ち手側のビルに張り付いている地上の敵は撃てない */
+    wallHug: boolean
+  }
   /** 攻撃したユニットの位置は相手に露見する */
   attackReveals: boolean
   /** 敵と同じマスに移動しようとして弾かれたとき、互いの位置が露見する */
@@ -69,11 +75,14 @@ export interface Unit {
   alive: boolean
 }
 
-/** 命令は移動先のみ。攻撃は移動後に自動で行う */
+/** 命令: 移動先と、狙う敵（任意）。移動後に射程・射線が通り、見えていれば撃つ */
 export interface Order {
   unitId: string
   dest: Pos
+  target?: string
 }
+
+export type StrikeBlock = 'range' | 'blocked' | 'cover' | 'moved' | 'unseen' | 'gone'
 
 export interface Intel {
   unitId: string
@@ -90,6 +99,8 @@ export type GameEvent =
   | { type: 'bounce'; unitId: string; at: Pos; contact: boolean }
   /** spotted: 撃った本人には見えておらず、味方の索敵で撃てた */
   | { type: 'attack'; unitId: string; from: Pos; target: Pos; hitId: string; damage: number; spotted: boolean }
+  /** 狙ったが撃てなかった */
+  | { type: 'noshot'; unitId: string; targetId: string; reason: StrikeBlock }
   | { type: 'bailout'; unitId: string; at: Pos }
 
 export interface GameState {

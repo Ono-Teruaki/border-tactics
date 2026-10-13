@@ -7,31 +7,59 @@ export type TileMark = 'fog' | 'reach' | 'range' | 'dest' | 'reachRange'
 export interface PieceSpec {
   id: string
   side: 0 | 1
-  kanji: string
+  cls: string
+  letter: string
   hp: number | null
   maxHp: number
   pos: Pos
   ghost?: boolean
   label?: string
   selected?: boolean
+  targeted?: boolean
 }
 
 export interface PlanSpec {
   id: string
+  cls: string
   from: Pos
   to: Pos
-  side: 0 | 1
-  kanji: string
   warn?: boolean
+  /** 狙い先（移動先からの射線） */
+  target?: Pos
+  targetOk?: boolean
 }
 
 const BUILDING_H = 0.9
-const COLORS = { me: 0x3d8bff, en: 0xff4d4d }
+const C = {
+  bg: 0xeef1f5,
+  me: 0x2f6fec,
+  en: 0xe0443e,
+  white: 0xf6f6f4,
+  black: 0x2a2e35,
+  warn: 0xf0a020,
+}
 const VIEWS = [
   { name: '斜め', azimuth: Math.PI / 4, elevation: 0.9 },
   { name: '正面', azimuth: 0, elevation: 0.85 },
   { name: '真上', azimuth: 0, elevation: 1.5 },
 ]
+
+/** クラスごとのシルエット（LatheGeometry の [半径, 高さ]） */
+const BASE: [number, number][] = [
+  [0, 0],
+  [0.34, 0],
+  [0.34, 0.05],
+  [0.3, 0.08],
+  [0.24, 0.11],
+  [0.19, 0.16],
+]
+const PROFILES: Record<string, [number, number][]> = {
+  attacker: [...BASE, [0.13, 0.42], [0.18, 0.5], [0.18, 0.55], [0.09, 0.58], [0.07, 0.86], [0.035, 0.98], [0, 1.02]],
+  gunner: [...BASE, [0.12, 0.42], [0.2, 0.47], [0.2, 0.51], [0.1, 0.54], [0.15, 0.58], [0.17, 0.66], [0.15, 0.74], [0.09, 0.79], [0, 0.81]],
+  sniper: [...BASE, [0.09, 0.4], [0.07, 0.74], [0.17, 0.78], [0.17, 0.82], [0.05, 0.85], [0.035, 1.08], [0, 1.1]],
+  scout: [...BASE, [0.17, 0.3], [0.21, 0.4], [0.2, 0.48], [0.13, 0.54], [0.03, 0.56], [0.03, 0.74], [0.07, 0.77], [0.04, 0.81], [0, 0.82]],
+}
+const pieceHeight = (cls: string) => Math.max(...(PROFILES[cls] ?? PROFILES.gunner).map((p) => p[1]))
 
 interface Tween {
   start: number
@@ -40,10 +68,11 @@ interface Tween {
   resolve: () => void
 }
 
-/** 将棋盤風の3D盤面。ゲームロジックは持たず、渡された表示状態を描くだけ */
+/** チェス盤風の3D盤面。ゲームロジックは持たず、渡された表示状態を描くだけ */
 export class Board3D {
   readonly canvas: HTMLCanvasElement
   onTap: (p: Pos) => void = () => {}
+  private container: HTMLElement
   private renderer: THREE.WebGLRenderer
   private scene = new THREE.Scene()
   private camera: THREE.PerspectiveCamera
@@ -54,38 +83,38 @@ export class Board3D {
   private pieces = new Map<string, THREE.Group>()
   private planGroup = new THREE.Group()
   private fxGroup = new THREE.Group()
-  private texCache = new Map<string, THREE.Texture>()
-  private komaGeo: THREE.ExtrudeGeometry
+  private geoCache = new Map<string, THREE.BufferGeometry>()
   private tweens: Tween[] = []
   private looping = false
   private viewIndex = 0
+  private zoom = 1
+  private pan = new THREE.Vector3()
+  private baseDist = 10
   private resizeObs: ResizeObserver
-  private container: HTMLElement
 
   constructor(container: HTMLElement, map: MapDef) {
     this.container = container
     this.map = map
     this.half = (map.width - 1) / 2
-    this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false })
+    this.renderer = new THREE.WebGLRenderer({ antialias: true })
     this.renderer.setPixelRatio(Math.min(2, window.devicePixelRatio))
     this.renderer.shadowMap.enabled = true
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap
     this.canvas = this.renderer.domElement
     this.canvas.style.touchAction = 'none'
     container.append(this.canvas)
-    this.scene.background = new THREE.Color(0x0d1117)
+    this.scene.background = new THREE.Color(C.bg)
     this.camera = new THREE.PerspectiveCamera(32, 1, 0.1, 200)
 
-    this.scene.add(new THREE.HemisphereLight(0xfff4e0, 0x202530, 1.6))
+    this.scene.add(new THREE.HemisphereLight(0xffffff, 0xc8ced8, 2.0))
     const sun = new THREE.DirectionalLight(0xffffff, 2.2)
-    sun.position.set(-6, 14, 8)
+    sun.position.set(-5, 14, 7)
     sun.castShadow = true
-    sun.shadow.mapSize.set(1024, 1024)
+    sun.shadow.mapSize.set(2048, 2048)
     const s = map.width / 2 + 2
     Object.assign(sun.shadow.camera, { left: -s, right: s, top: s, bottom: -s, near: 1, far: 40 })
     this.scene.add(sun)
 
-    this.komaGeo = makeKomaGeometry()
     this.buildBoard()
     this.scene.add(this.planGroup, this.fxGroup)
 
@@ -117,39 +146,37 @@ export class Board3D {
   // ---------- 盤 ----------
   private buildBoard() {
     const n = this.map.width
-    const top = new THREE.MeshStandardMaterial({ map: boardTexture(n), roughness: 0.75 })
-    const side = new THREE.MeshStandardMaterial({ color: 0xc08a45, roughness: 0.8 })
-    const board = new THREE.Mesh(new THREE.BoxGeometry(n + 0.5, 0.7, n + 0.5), [side, side, top, side, side, side])
-    board.position.y = -0.35
+    const top = new THREE.MeshStandardMaterial({ map: boardTexture(n), roughness: 0.45 })
+    const side = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.5 })
+    const board = new THREE.Mesh(new THREE.BoxGeometry(n + 0.4, 0.3, n + 0.4), [side, side, top, side, side, side])
+    board.position.y = -0.15
     board.receiveShadow = true
     this.scene.add(board)
-    // 脚
-    const legMat = new THREE.MeshStandardMaterial({ color: 0x8a5a2b, roughness: 0.9 })
-    for (const [sx, sz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) {
-      const leg = new THREE.Mesh(new THREE.CylinderGeometry(0.35, 0.28, 0.8, 16), legMat)
-      leg.position.set((sx * (n - 1)) / 2, -1.1, (sz * (n - 1)) / 2)
-      this.scene.add(leg)
-    }
+    const plinth = new THREE.Mesh(new THREE.BoxGeometry(n + 0.1, 0.25, n + 0.1), new THREE.MeshStandardMaterial({ color: 0xd5dae2, roughness: 0.6 }))
+    plinth.position.y = -0.42
+    this.scene.add(plinth)
 
-    const bTex = buildingTexture()
-    const bSide = new THREE.MeshStandardMaterial({ map: bTex, roughness: 0.6 })
-    const bTop = new THREE.MeshStandardMaterial({ color: 0x9aa3ad, roughness: 0.7 })
+    const glass = new THREE.MeshStandardMaterial({ map: buildingTexture(), roughness: 0.3 })
+    const roof = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.5 })
+    const edgeMat = new THREE.LineBasicMaterial({ color: 0xb8c0cc })
     for (let y = 0; y < n; y++) {
       for (let x = 0; x < n; x++) {
         const p = { x, y }
-        const isB = terrainId(this.map, p) === 'building'
-        if (isB) {
-          const b = new THREE.Mesh(new THREE.BoxGeometry(0.88, BUILDING_H, 0.88), [bSide, bSide, bTop, bTop, bSide, bSide])
+        if (terrainId(this.map, p) === 'building') {
+          const b = new THREE.Mesh(new THREE.BoxGeometry(0.9, BUILDING_H, 0.9), [glass, glass, roof, roof, glass, glass])
           b.position.copy(this.world({ x, y })).setY(BUILDING_H / 2)
           b.castShadow = true
           b.receiveShadow = true
           b.userData.tile = p
           this.scene.add(b)
           this.pickables.push(b)
+          const edge = new THREE.LineSegments(new THREE.EdgesGeometry(b.geometry), edgeMat)
+          edge.position.copy(b.position)
+          this.scene.add(edge)
         }
-        const ov = new THREE.Mesh(new THREE.PlaneGeometry(0.94, 0.94), new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false }))
+        const ov = new THREE.Mesh(new THREE.PlaneGeometry(0.98, 0.98), new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false }))
         ov.rotation.x = -Math.PI / 2
-        ov.position.copy(this.world(p, 0.012))
+        ov.position.copy(this.world(p, 0.006))
         ov.userData.tile = p
         ov.renderOrder = 1
         this.overlays.set(key(p), ov)
@@ -165,11 +192,11 @@ export class Board3D {
       const mat = ov.material as THREE.MeshBasicMaterial
       let color = 0x000000
       let opacity = 0
-      if (m?.has('fog')) (color = 0x05070c), (opacity = 0.5)
-      if (m?.has('range')) (color = 0xff4d4d), (opacity = 0.32)
-      if (m?.has('reach')) (color = 0x3d8bff), (opacity = 0.42)
-      if (m?.has('reachRange')) (color = 0x9b6bff), (opacity = 0.45)
-      if (m?.has('dest')) (color = 0x7fd3ff), (opacity = 0.7)
+      if (m?.has('fog')) (color = 0x4a5466), (opacity = 0.3)
+      if (m?.has('range')) (color = C.en), (opacity = 0.14)
+      if (m?.has('reach')) (color = C.me), (opacity = 0.28)
+      if (m?.has('reachRange')) (color = 0x7a5cff), (opacity = 0.3)
+      if (m?.has('dest')) (color = C.me), (opacity = 0.6)
       mat.color.setHex(color)
       mat.opacity = opacity
     }
@@ -177,51 +204,62 @@ export class Board3D {
   }
 
   // ---------- 駒 ----------
-  private komaTexture(spec: { kanji: string; side: 0 | 1; hp: number | null; maxHp: number; ghost?: boolean; label?: string }) {
-    const k = `${spec.kanji}|${spec.side}|${spec.hp}|${spec.maxHp}|${spec.ghost}|${spec.label}`
-    let tex = this.texCache.get(k)
-    if (!tex) {
-      tex = komaTexture(spec)
-      this.texCache.set(k, tex)
+  private geometry(cls: string) {
+    let g = this.geoCache.get(cls)
+    if (!g) {
+      const pts = (PROFILES[cls] ?? PROFILES.gunner).map(([r, y]) => new THREE.Vector2(r, y))
+      g = new THREE.LatheGeometry(pts, 40)
+      g.computeVertexNormals()
+      this.geoCache.set(cls, g)
     }
-    return tex
+    return g
   }
 
   private makePiece(spec: PieceSpec): THREE.Group {
     const g = new THREE.Group()
-    const top = new THREE.MeshStandardMaterial({ roughness: 0.55, transparent: true })
-    const side = new THREE.MeshStandardMaterial({ color: 0xe2b874, roughness: 0.6, transparent: true })
-    const koma = new THREE.Mesh(this.komaGeo, [top, side])
-    koma.castShadow = true
-    koma.userData.piece = spec.id
-    const base = new THREE.Mesh(new THREE.CylinderGeometry(0.44, 0.46, 0.03, 32), new THREE.MeshBasicMaterial({ color: spec.side === 0 ? COLORS.me : COLORS.en, transparent: true }))
-    base.position.y = 0.015
-    koma.position.y = 0.03
-    const ring = new THREE.Mesh(new THREE.TorusGeometry(0.46, 0.035, 8, 40), new THREE.MeshBasicMaterial({ color: 0xffffff }))
-    ring.rotation.x = Math.PI / 2
-    ring.position.y = 0.05
+    const body = new THREE.Mesh(
+      this.geometry(spec.cls),
+      new THREE.MeshStandardMaterial({ color: spec.side === 0 ? C.white : C.black, roughness: spec.side === 0 ? 0.35 : 0.45, transparent: true }),
+    )
+    body.castShadow = true
+    const band = new THREE.Mesh(new THREE.TorusGeometry(0.3, 0.025, 8, 40), new THREE.MeshBasicMaterial({ color: spec.side === 0 ? C.me : C.en, transparent: true }))
+    band.rotation.x = Math.PI / 2
+    band.position.y = 0.07
+    const ring = new THREE.Mesh(new THREE.RingGeometry(0.4, 0.47, 48), new THREE.MeshBasicMaterial({ color: C.me, side: THREE.DoubleSide }))
+    ring.rotation.x = -Math.PI / 2
+    ring.position.y = 0.012
     ring.name = 'ring'
-    g.add(base, koma, ring)
-    // 自軍は敵陣（右上）へ、敵は自陣（左下）へ向く
-    g.rotation.y = spec.side === 0 ? -Math.PI / 4 : (Math.PI * 3) / 4
-    g.userData = { id: spec.id, top, side, base, koma }
+    const reticle = new THREE.Mesh(new THREE.RingGeometry(0.36, 0.47, 4, 1, Math.PI / 4), new THREE.MeshBasicMaterial({ color: C.en, side: THREE.DoubleSide }))
+    reticle.rotation.x = -Math.PI / 2
+    reticle.position.y = 0.014
+    reticle.name = 'reticle'
+    const tag = new THREE.Sprite(new THREE.SpriteMaterial({ transparent: true, depthTest: false }))
+    tag.scale.set(0.82, 0.32, 1)
+    tag.position.y = pieceHeight(spec.cls) + 0.22
+    tag.renderOrder = 5
+    g.add(body, band, ring, reticle, tag)
+    g.userData = { id: spec.id, body, band, tag, tagKey: '' }
     this.scene.add(g)
-    this.pickables.push(koma)
+    this.pickables.push(body)
     return g
   }
 
   private applySpec(g: THREE.Group, spec: PieceSpec) {
-    const { top, side, base, koma } = g.userData as { top: THREE.MeshStandardMaterial; side: THREE.MeshStandardMaterial; base: THREE.Mesh; koma: THREE.Mesh }
-    top.map = this.komaTexture(spec)
-    top.needsUpdate = true
-    const op = spec.ghost ? 0.35 : 1
-    top.opacity = op
-    side.opacity = op
-    ;(base.material as THREE.MeshBasicMaterial).opacity = spec.ghost ? 0.3 : 1
-    koma.castShadow = !spec.ghost
+    const { body, band, tag } = g.userData as { body: THREE.Mesh; band: THREE.Mesh; tag: THREE.Sprite }
+    const op = spec.ghost ? 0.3 : 1
+    ;(body.material as THREE.MeshStandardMaterial).opacity = op
+    ;(band.material as THREE.MeshBasicMaterial).opacity = op
+    body.castShadow = !spec.ghost
     g.getObjectByName('ring')!.visible = !!spec.selected
-    koma.userData.tile = spec.pos
-    g.userData.pos = spec.pos
+    g.getObjectByName('reticle')!.visible = !!spec.targeted
+    const tk = `${spec.letter}|${spec.side}|${spec.hp}|${spec.maxHp}|${spec.label}|${spec.ghost}`
+    if (g.userData.tagKey !== tk) {
+      tag.material.map?.dispose()
+      tag.material.map = tagTexture(spec)
+      tag.material.needsUpdate = true
+      g.userData.tagKey = tk
+    }
+    body.userData.tile = spec.pos
   }
 
   /** 駒の表示を同期する。animate なら移動をトゥイーン */
@@ -243,7 +281,7 @@ export class Board3D {
           this.tween(dur, (t) => {
             const e = t < 0.5 ? 2 * t * t : 1 - (-2 * t + 2) ** 2 / 2
             grp.position.lerpVectors(from, target, e)
-            grp.position.y += Math.sin(Math.PI * t) * 0.6
+            grp.position.y += Math.sin(Math.PI * t) * 0.35
           }),
         )
       } else {
@@ -264,56 +302,47 @@ export class Board3D {
   setPlans(plans: PlanSpec[]) {
     this.planGroup.clear()
     for (const p of plans) {
-      const a = this.world(p.from, 0.25)
-      const b = this.world(p.to, 0.25)
-      const mid = a.clone().lerp(b, 0.5)
-      mid.y += 0.6 + a.distanceTo(b) * 0.1
-      const curve = new THREE.QuadraticBezierCurve3(a, mid, b)
-      const color = p.warn ? 0xffb020 : p.side === 0 ? 0x7fd3ff : 0xff8080
-      const tube = new THREE.Mesh(new THREE.TubeGeometry(curve, 20, 0.035, 6), new THREE.MeshBasicMaterial({ color }))
-      this.planGroup.add(tube)
-      const cone = new THREE.Mesh(new THREE.ConeGeometry(0.1, 0.25, 12), new THREE.MeshBasicMaterial({ color }))
-      cone.position.copy(b)
-      cone.lookAt(curve.getPoint(0.9))
-      cone.rotateX(-Math.PI / 2)
-      this.planGroup.add(cone)
-      // 移動先の半透明駒
-      const top = new THREE.MeshStandardMaterial({ map: this.komaTexture({ kanji: p.kanji, side: p.side, hp: null, maxHp: 0, ghost: true }), transparent: true, opacity: 0.45 })
-      const side = new THREE.MeshStandardMaterial({ color: 0xe2b874, transparent: true, opacity: 0.45 })
-      const ghost = new THREE.Mesh(this.komaGeo, [top, side])
-      ghost.position.copy(this.world(p.to, 0.03))
-      ghost.rotation.y = p.side === 0 ? -Math.PI / 4 : (Math.PI * 3) / 4
-      this.planGroup.add(ghost)
+      if (p.from.x !== p.to.x || p.from.y !== p.to.y) {
+        this.planGroup.add(flatArrow(this.world(p.from, 0.03), this.world(p.to, 0.03), p.warn ? C.warn : C.me))
+        const ghost = new THREE.Mesh(this.geometry(p.cls), new THREE.MeshStandardMaterial({ color: C.white, transparent: true, opacity: 0.45 }))
+        ghost.position.copy(this.world(p.to))
+        this.planGroup.add(ghost)
+      }
+      if (p.target) {
+        const line = new THREE.Line(
+          new THREE.BufferGeometry().setFromPoints([this.world(p.to, 0.55), this.world(p.target, 0.45)]),
+          new THREE.LineDashedMaterial({ color: p.targetOk ? C.en : C.warn, dashSize: 0.12, gapSize: 0.08, depthTest: false, transparent: true }),
+        )
+        line.computeLineDistances()
+        line.renderOrder = 4
+        this.planGroup.add(line)
+      }
     }
     this.requestRender()
   }
 
   // ---------- 演出 ----------
   shoot(from: Pos, to: Pos, side: 0 | 1, spotted: boolean): Promise<void> {
-    const a = this.world(from, 0.3)
-    const b = this.world(to, 0.3)
-    const len = a.distanceTo(b)
-    const beam = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.05, 0.05, len, 8),
-      new THREE.MeshBasicMaterial({ color: side === 0 ? 0x9fd0ff : 0xffa0a0, transparent: true }),
-    )
+    const a = this.world(from, 0.5)
+    const b = this.world(to, 0.45)
+    const beam = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, a.distanceTo(b), 8), new THREE.MeshBasicMaterial({ color: side === 0 ? C.me : C.en, transparent: true }))
     beam.position.copy(a.clone().lerp(b, 0.5))
     beam.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), b.clone().sub(a).normalize())
     this.fxGroup.add(beam)
-    if (spotted) this.popup(from, '索敵', '#9fe0a0', 600)
-    return this.tween(650, (t) => {
+    if (spotted) this.popup(from, '索敵連携', '#1f9d55', 700)
+    return this.tween(600, (t) => {
       ;(beam.material as THREE.MeshBasicMaterial).opacity = 1 - t
-      beam.scale.x = beam.scale.z = 1 + t * 1.5
+      beam.scale.x = beam.scale.z = 1 + t * 2
     }).then(() => void this.fxGroup.remove(beam))
   }
 
   popup(at: Pos, text: string, color: string, dur = 900): Promise<void> {
     const sprite = textSprite(text, color)
-    const p = this.world(at, 0.8)
+    const p = this.world(at, 1.3)
     sprite.position.copy(p)
     this.fxGroup.add(sprite)
     return this.tween(dur, (t) => {
-      sprite.position.y = p.y + t * 0.8
+      sprite.position.y = p.y + t * 0.5
       sprite.material.opacity = t < 0.7 ? 1 : 1 - (t - 0.7) / 0.3
     }).then(() => void this.fxGroup.remove(sprite))
   }
@@ -322,39 +351,54 @@ export class Board3D {
   bailout(at: Pos, side: 0 | 1): Promise<void> {
     const h = 6
     const pillar = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.3, 0.3, h, 16, 1, true),
-      new THREE.MeshBasicMaterial({ color: side === 0 ? 0x9fd0ff : 0xffa0a0, transparent: true, side: THREE.DoubleSide, depthWrite: false }),
+      new THREE.CylinderGeometry(0.28, 0.28, h, 24, 1, true),
+      new THREE.MeshBasicMaterial({ color: side === 0 ? C.me : C.en, transparent: true, side: THREE.DoubleSide, depthWrite: false }),
     )
     const base = this.world(at)
     pillar.position.copy(base).setY(base.y + h / 2)
     this.fxGroup.add(pillar)
-    this.popup(at, 'BAIL OUT', side === 0 ? '#9fd0ff' : '#ffb0b0', 1100)
+    this.popup(at, 'BAIL OUT', side === 0 ? '#2f6fec' : '#e0443e', 1100)
     return this.tween(1000, (t) => {
-      ;(pillar.material as THREE.MeshBasicMaterial).opacity = 0.8 * (1 - t)
+      ;(pillar.material as THREE.MeshBasicMaterial).opacity = 0.6 * (1 - t)
       pillar.scale.x = pillar.scale.z = 1 - t * 0.7
     }).then(() => void this.fxGroup.remove(pillar))
   }
 
+  // ---------- カメラ（視点・ズーム・パン） ----------
   cycleView(): string {
     this.viewIndex = (this.viewIndex + 1) % VIEWS.length
-    this.placeCamera()
+    this.resetZoom()
     return VIEWS[this.viewIndex].name
   }
+  zoomBy(f: number) {
+    this.zoom = Math.min(3.5, Math.max(0.8, this.zoom * f))
+    if (this.zoom <= 1.001) this.pan.set(0, 0, 0)
+    this.updateCamera()
+  }
+  resetZoom() {
+    this.zoom = 1
+    this.pan.set(0, 0, 0)
+    this.fitCamera()
+  }
 
-  // ---------- 内部 ----------
-  private placeCamera() {
+  private dir() {
     const v = VIEWS[this.viewIndex]
-    const e = this.map.width / 2 + 0.3
-    const pts = [-e, e].flatMap((x) => [-e, e].flatMap((z) => [new THREE.Vector3(x, -0.7, z), new THREE.Vector3(x, 1.2, z)]))
-    // 方位: 自陣（左下 = -x, +z）側から見る。盤の角が画面に収まる最短距離を二分探索
-    const dir = new THREE.Vector3(-Math.sin(v.azimuth) * Math.cos(v.elevation), Math.sin(v.elevation), Math.cos(v.azimuth) * Math.cos(v.elevation))
+    // 自陣（左下 = -x, +z）側から見る
+    return new THREE.Vector3(-Math.sin(v.azimuth) * Math.cos(v.elevation), Math.sin(v.elevation), Math.cos(v.azimuth) * Math.cos(v.elevation))
+  }
+
+  /** 盤全体が収まる距離を二分探索で求める */
+  private fitCamera() {
+    const e = this.map.width / 2 + 0.25
+    const pts = [-e, e].flatMap((x) => [-e, e].flatMap((z) => [new THREE.Vector3(x, -0.5, z), new THREE.Vector3(x, 1.2, z)]))
+    const dir = this.dir()
     const fits = (d: number) => {
       this.camera.position.copy(dir).multiplyScalar(d)
       this.camera.lookAt(0, 0, 0)
       this.camera.updateMatrixWorld()
       return pts.every((q) => {
         const pr = q.clone().project(this.camera)
-        return Math.abs(pr.x) <= 0.96 && Math.abs(pr.y) <= 0.94
+        return Math.abs(pr.x) <= 0.97 && Math.abs(pr.y) <= 0.95
       })
     }
     let lo = 2
@@ -364,8 +408,28 @@ export class Board3D {
       if (fits(mid)) hi = mid
       else lo = mid
     }
-    fits(hi)
+    this.baseDist = hi
+    this.updateCamera()
+  }
+
+  private updateCamera() {
+    const lim = this.half
+    this.pan.x = Math.max(-lim, Math.min(lim, this.pan.x))
+    this.pan.z = Math.max(-lim, Math.min(lim, this.pan.z))
+    this.camera.position.copy(this.dir()).multiplyScalar(this.baseDist / this.zoom).add(this.pan)
+    this.camera.lookAt(this.pan)
+    this.camera.updateMatrixWorld()
     this.requestRender()
+  }
+
+  private panByPixels(dx: number, dy: number) {
+    const h = this.canvas.clientHeight || 1
+    const wpp = (2 * Math.tan((this.camera.fov * Math.PI) / 360) * (this.baseDist / this.zoom)) / h
+    const right = new THREE.Vector3().setFromMatrixColumn(this.camera.matrixWorld, 0).setY(0).normalize()
+    const fwd = new THREE.Vector3().crossVectors(new THREE.Vector3(0, 1, 0), right).normalize()
+    const elev = VIEWS[this.viewIndex].elevation
+    this.pan.addScaledVector(right, -dx * wpp).addScaledVector(fwd, (dy * wpp) / Math.max(0.3, Math.sin(elev)))
+    this.updateCamera()
   }
 
   private resize() {
@@ -377,22 +441,67 @@ export class Board3D {
     this.canvas.style.height = `${h}px`
     this.camera.aspect = w / h
     this.camera.updateProjectionMatrix()
-    this.placeCamera()
+    this.fitCamera()
   }
 
   private bindInput() {
-    let down: { x: number; y: number } | null = null
-    this.canvas.addEventListener('pointerdown', (e) => (down = { x: e.clientX, y: e.clientY }))
-    this.canvas.addEventListener('pointerup', (e) => {
-      if (!down || Math.hypot(e.clientX - down.x, e.clientY - down.y) > 12) return
-      down = null
+    const pts = new Map<number, { x: number; y: number }>()
+    let start: { x: number; y: number } | null = null
+    let dragged = false
+    let pinchDist = 0
+    const mid = () => {
+      const a = [...pts.values()]
+      return { x: (a[0].x + a[1].x) / 2, y: (a[0].y + a[1].y) / 2, d: Math.hypot(a[0].x - a[1].x, a[0].y - a[1].y) }
+    }
+    this.canvas.addEventListener('pointerdown', (e) => {
+      this.canvas.setPointerCapture(e.pointerId)
+      pts.set(e.pointerId, { x: e.clientX, y: e.clientY })
+      if (pts.size === 1) {
+        start = { x: e.clientX, y: e.clientY }
+        dragged = false
+      } else if (pts.size === 2) {
+        dragged = true
+        pinchDist = mid().d
+      }
+    })
+    this.canvas.addEventListener('pointermove', (e) => {
+      const prev = pts.get(e.pointerId)
+      if (!prev) return
+      if (pts.size === 2) {
+        const before = mid()
+        pts.set(e.pointerId, { x: e.clientX, y: e.clientY })
+        const after = mid()
+        if (pinchDist > 0) this.zoomBy(after.d / pinchDist)
+        pinchDist = after.d
+        this.panByPixels(after.x - before.x, after.y - before.y)
+        return
+      }
+      pts.set(e.pointerId, { x: e.clientX, y: e.clientY })
+      if (start && !dragged && Math.hypot(e.clientX - start.x, e.clientY - start.y) > 10) dragged = true
+      if (dragged && this.zoom > 1.001) this.panByPixels(e.clientX - prev.x, e.clientY - prev.y)
+    })
+    const end = (e: PointerEvent) => {
+      const wasTap = pts.size === 1 && !dragged && e.type === 'pointerup'
+      pts.delete(e.pointerId)
+      if (pts.size < 2) pinchDist = 0
+      if (!wasTap) return
       const r = this.canvas.getBoundingClientRect()
       const ndc = new THREE.Vector2(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1)
       const ray = new THREE.Raycaster()
       ray.setFromCamera(ndc, this.camera)
       const hit = ray.intersectObjects(this.pickables, false).find((h) => h.object.userData.tile)
       if (hit) this.onTap(hit.object.userData.tile as Pos)
-    })
+    }
+    this.canvas.addEventListener('pointerup', end)
+    this.canvas.addEventListener('pointercancel', end)
+    this.canvas.addEventListener(
+      'wheel',
+      (e) => {
+        e.preventDefault()
+        this.zoomBy(Math.exp(-e.deltaY * 0.0015))
+      },
+      { passive: false },
+    )
   }
 
   private tween(dur: number, update: (t: number) => void): Promise<void> {
@@ -432,23 +541,31 @@ export class Board3D {
 }
 
 // ---------- 形状・テクスチャ ----------
-const KW = 0.74
-const KH = 0.86
-
-function makeKomaGeometry() {
-  const s = new THREE.Shape()
-  s.moveTo(-KW / 2, -KH / 2)
-  s.lineTo(KW / 2, -KH / 2)
-  s.lineTo(KW * 0.4, KH * 0.22)
-  s.lineTo(0, KH / 2)
-  s.lineTo(-KW * 0.4, KH * 0.22)
-  s.closePath()
-  const geo = new THREE.ExtrudeGeometry(s, { depth: 0.14, bevelEnabled: true, bevelThickness: 0.025, bevelSize: 0.02, bevelSegments: 2 })
-  geo.rotateX(-Math.PI / 2)
-  // 上面の UV を形状の外接矩形に合わせる
-  const uv = geo.attributes.uv as THREE.BufferAttribute
-  for (let i = 0; i < uv.count; i++) uv.setXY(i, uv.getX(i) / KW + 0.5, uv.getY(i) / KH + 0.5)
-  return geo
+/** 盤面に貼り付く平たい矢印 */
+function flatArrow(a: THREE.Vector3, b: THREE.Vector3, color: number) {
+  const len = Math.hypot(b.x - a.x, b.z - a.z)
+  const mat = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.9, depthWrite: false, side: THREE.DoubleSide })
+  const shape = new THREE.Shape()
+  const w = 0.04
+  const hw = 0.14
+  const hl = 0.26
+  const body = Math.max(0.01, len - 0.3)
+  shape.moveTo(-w, 0)
+  shape.lineTo(-w, body - hl)
+  shape.lineTo(-hw, body - hl)
+  shape.lineTo(0, body)
+  shape.lineTo(hw, body - hl)
+  shape.lineTo(w, body - hl)
+  shape.lineTo(w, 0)
+  shape.closePath()
+  const m = new THREE.Mesh(new THREE.ShapeGeometry(shape), mat)
+  m.rotation.x = -Math.PI / 2 // shape の +y を -z（奥）へ
+  const g = new THREE.Group()
+  g.add(m)
+  g.position.set(a.x, Math.max(a.y, b.y), a.z)
+  g.rotation.y = Math.atan2(-(b.x - a.x), -(b.z - a.z))
+  g.renderOrder = 3
+  return g
 }
 
 function canvasTex(c: HTMLCanvasElement) {
@@ -458,82 +575,72 @@ function canvasTex(c: HTMLCanvasElement) {
   return t
 }
 
-function komaTexture(spec: { kanji: string; side: 0 | 1; hp: number | null; maxHp: number; ghost?: boolean; label?: string }) {
-  const W = 256
-  const H = Math.round((W * KH) / KW)
+function roundRect(g: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
+  g.beginPath()
+  g.moveTo(x + r, y)
+  g.arcTo(x + w, y, x + w, y + h, r)
+  g.arcTo(x + w, y + h, x, y + h, r)
+  g.arcTo(x, y + h, x, y, r)
+  g.arcTo(x, y, x + w, y, r)
+  g.closePath()
+}
+
+/** 駒の上に浮かぶ小さなタグ（クラス記号 + HPバー / 何手前） */
+function tagTexture(spec: PieceSpec) {
+  const W = 160
+  const H = 62
   const c = document.createElement('canvas')
   c.width = W
   c.height = H
   const g = c.getContext('2d')!
-  const grad = g.createLinearGradient(0, 0, W, H)
-  grad.addColorStop(0, '#f3d49a')
-  grad.addColorStop(1, '#e0b46c')
-  g.fillStyle = grad
-  g.fillRect(0, 0, W, H)
-  g.strokeStyle = 'rgba(150,100,40,0.25)'
-  for (let i = 0; i < 14; i++) {
-    g.beginPath()
-    g.moveTo(0, (i / 14) * H + 4)
-    g.bezierCurveTo(W * 0.3, (i / 14) * H - 6, W * 0.7, (i / 14) * H + 10, W, (i / 14) * H)
-    g.stroke()
-  }
-  g.fillStyle = spec.side === 0 ? '#1b1b1b' : '#b3141b'
-  g.font = `900 ${W * 0.5}px "Hiragino Mincho ProN", "Yu Mincho", serif`
-  g.textAlign = 'center'
+  const accent = spec.side === 0 ? '#2f6fec' : '#e0443e'
+  g.globalAlpha = spec.ghost ? 0.75 : 1
+  roundRect(g, 3, 3, W - 6, H - 6, 18)
+  g.fillStyle = spec.side === 0 ? '#ffffff' : '#2a2e35'
+  g.fill()
+  g.lineWidth = 4
+  g.strokeStyle = accent
+  g.stroke()
+  g.fillStyle = spec.side === 0 ? '#1d2330' : '#ffffff'
+  g.font = '800 32px system-ui, sans-serif'
   g.textBaseline = 'middle'
-  g.fillText(spec.kanji, W / 2, H * 0.47)
+  g.textAlign = 'center'
+  g.fillText(spec.letter, 30, H / 2 + 1)
   if (spec.label) {
-    g.font = `700 ${W * 0.15}px system-ui, sans-serif`
-    g.fillText(spec.label, W / 2, H * 0.82)
-  } else if (spec.hp !== null) {
+    g.font = '700 22px system-ui, sans-serif'
+    g.fillText(spec.label, 100, H / 2 + 1)
+  } else {
     const n = spec.maxHp
-    const r = W * 0.045
-    const gap = r * 2.6
+    const x0 = 56
+    const w = (W - 18 - x0) / n
     for (let i = 0; i < n; i++) {
-      g.beginPath()
-      g.arc(W / 2 + (i - (n - 1) / 2) * gap, H * 0.82, r, 0, Math.PI * 2)
-      if (i < spec.hp) g.fill()
-      else {
-        g.lineWidth = 3
-        g.stroke()
-      }
+      roundRect(g, x0 + i * w + 2, H / 2 - 8, w - 4, 16, 4)
+      g.fillStyle = spec.hp === null ? 'rgba(150,150,150,0.5)' : i < spec.hp ? accent : spec.side === 0 ? '#dfe3ea' : '#4a505a'
+      g.fill()
     }
-  } else if (!spec.ghost) {
-    g.font = `700 ${W * 0.16}px system-ui`
-    g.fillText('?', W / 2, H * 0.82)
   }
   return canvasTex(c)
 }
 
 function boardTexture(n: number) {
-  const px = 64
-  const pad = 0.25
+  const px = 96
+  const pad = 0.2
   const size = Math.round((n + pad * 2) * px)
   const c = document.createElement('canvas')
   c.width = c.height = size
   const g = c.getContext('2d')!
-  g.fillStyle = '#e6b86a'
+  g.fillStyle = '#ffffff'
   g.fillRect(0, 0, size, size)
-  for (let i = 0; i < 60; i++) {
-    g.strokeStyle = `rgba(160,105,40,${0.08 + Math.random() * 0.1})`
-    g.lineWidth = 1 + Math.random() * 2
-    const y = Math.random() * size
-    g.beginPath()
-    g.moveTo(0, y)
-    g.bezierCurveTo(size * 0.3, y + 8, size * 0.6, y - 8, size, y + 4)
-    g.stroke()
-  }
-  g.strokeStyle = '#2a1a08'
-  g.lineWidth = 2
   const o = pad * px
-  for (let i = 0; i <= n; i++) {
-    g.beginPath()
-    g.moveTo(o + i * px, o)
-    g.lineTo(o + i * px, o + n * px)
-    g.moveTo(o, o + i * px)
-    g.lineTo(o + n * px, o + i * px)
-    g.stroke()
+  for (let y = 0; y < n; y++) {
+    for (let x = 0; x < n; x++) {
+      g.fillStyle = (x + y) % 2 === 0 ? '#f7f8fa' : '#e1e5ec'
+      g.fillRect(o + x * px, o + y * px, px, px)
+    }
   }
+  g.strokeStyle = '#c3cad4'
+  g.lineWidth = 3
+  g.strokeRect(o, o, n * px, n * px)
   return canvasTex(c)
 }
 
@@ -542,30 +649,30 @@ function buildingTexture() {
   c.width = 64
   c.height = 64
   const g = c.getContext('2d')!
-  g.fillStyle = '#6f7882'
+  g.fillStyle = '#ffffff'
   g.fillRect(0, 0, 64, 64)
-  g.fillStyle = '#2b3440'
-  for (let y = 0; y < 4; y++) for (let x = 0; x < 3; x++) g.fillRect(6 + x * 19, 6 + y * 15, 13, 9)
-  g.fillStyle = 'rgba(255,220,140,0.6)'
-  g.fillRect(25, 21, 13, 9)
+  for (let y = 0; y < 4; y++) {
+    g.fillStyle = y % 2 ? '#cfe0f5' : '#dce9f8'
+    g.fillRect(6, 7 + y * 14, 52, 8)
+  }
   return canvasTex(c)
 }
 
 function textSprite(text: string, color: string) {
   const c = document.createElement('canvas')
-  c.width = 256
+  c.width = 320
   c.height = 96
   const g = c.getContext('2d')!
-  g.font = '900 64px system-ui, sans-serif'
+  g.font = '900 58px system-ui, sans-serif'
   g.textAlign = 'center'
   g.textBaseline = 'middle'
-  g.lineWidth = 10
-  g.strokeStyle = '#000'
-  g.strokeText(text, 128, 48)
+  g.lineWidth = 12
+  g.strokeStyle = '#ffffff'
+  g.strokeText(text, 160, 48)
   g.fillStyle = color
-  g.fillText(text, 128, 48)
+  g.fillText(text, 160, 48)
   const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: canvasTex(c), transparent: true, depthTest: false }))
-  sprite.scale.set(1.4, 0.525, 1)
+  sprite.scale.set(1.6, 0.48, 1)
   sprite.renderOrder = 10
   return sprite
 }
