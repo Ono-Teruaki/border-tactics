@@ -1,6 +1,5 @@
 export type Side = 0 | 1
-export type TerrainId = 'plain' | 'wall' | 'forest' | 'high'
-export type Stance = 'attack' | 'watch' | 'hide'
+export type TerrainId = 'plain' | 'building'
 export type VictoryMode = 'annihilation' | 'killCount' | 'killCost'
 
 export interface Pos {
@@ -11,6 +10,8 @@ export interface Pos {
 export interface UnitClass {
   id: string
   name: string
+  /** 駒に書く一文字 */
+  kanji: string
   short: string
   hp: number
   move: number
@@ -19,7 +20,7 @@ export interface UnitClass {
   vision: number
   /** 撃破されたときに相手に入るポイント */
   cost: number
-  /** この距離以下しか移動していなければ攻撃できる（スナイパー用） */
+  /** このマス数以下しか移動していなければ攻撃できる（スナイパー用） */
   attackMaxMove: number
 }
 
@@ -27,13 +28,12 @@ export interface TerrainRule {
   name: string
   passable: boolean
   moveCost: number
+  /** 地上同士の視線を遮る */
   blocksLos: boolean
-  /** このマスにいるユニットは、この距離以内からしか見えない（null = 制限なし） */
-  concealRange: number | null
   visionBonus: number
   rangeBonus: number
-  /** このマスから見るとき、途中の視界遮断（森）を無視する */
-  seesOverCover: boolean
+  /** ここ（屋上）から見るとき、途中の建物を無視して見通せる */
+  seesOverBlockers: boolean
 }
 
 export interface RulesConfig {
@@ -42,14 +42,8 @@ export interface RulesConfig {
   turnLimit: number
   victory: VictoryMode
   terrain: Record<TerrainId, TerrainRule>
-  /** 隠密ユニットはこの距離以内からしか見えない */
-  hideRevealRange: number
-  /** 隠密中の移動力補正 */
-  hideMovePenalty: number
-  /** 警戒（自動反撃）の射程ペナルティ。射程1は下回らない */
-  watchRangePenalty: number
-  /** 警戒の与ダメージペナルティ。1は下回らない */
-  watchDamagePenalty: number
+  /** true: 味方の誰かが見ている敵を撃てる（索敵が射撃に直結） / false: 自分の目で見えている敵のみ */
+  sharedTargeting: boolean
   /** 攻撃したユニットの位置は相手に露見する */
   attackReveals: boolean
   /** 敵と同じマスに移動しようとして弾かれたとき、互いの位置が露見する */
@@ -61,7 +55,7 @@ export interface MapDef {
   name: string
   width: number
   height: number
-  /** '.' 平地, '#' 壁, 'f' 森, 'h' 高台 */
+  /** '.' 平地, '#' ビル */
   tiles: string[]
   spawns: [Pos[], Pos[]]
 }
@@ -72,15 +66,13 @@ export interface Unit {
   cls: string
   pos: Pos
   hp: number
-  hidden: boolean
   alive: boolean
 }
 
+/** 命令は移動先のみ。攻撃は移動後に自動で行う */
 export interface Order {
   unitId: string
   dest: Pos
-  stance: Stance
-  target?: Pos
 }
 
 export interface Intel {
@@ -96,7 +88,8 @@ export interface Intel {
 export type GameEvent =
   | { type: 'move'; unitId: string; from: Pos; to: Pos }
   | { type: 'bounce'; unitId: string; at: Pos; contact: boolean }
-  | { type: 'attack'; unitId: string; from: Pos; target: Pos; hitId: string | null; damage: number; watch: boolean }
+  /** spotted: 撃った本人には見えておらず、味方の索敵で撃てた */
+  | { type: 'attack'; unitId: string; from: Pos; target: Pos; hitId: string; damage: number; spotted: boolean }
   | { type: 'bailout'; unitId: string; at: Pos }
 
 export interface GameState {

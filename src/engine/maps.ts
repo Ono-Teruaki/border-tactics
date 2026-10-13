@@ -1,63 +1,50 @@
 import type { MapDef, Pos } from './types.ts'
 
-/** 下側(side0)の出撃位置から、点対称で上側(side1)の出撃位置を作る */
-function mirrorSpawns(w: number, h: number, bottom: Pos[]): [Pos[], Pos[]] {
-  return [bottom, bottom.map((p) => ({ x: w - 1 - p.x, y: h - 1 - p.y }))]
-}
-
-function defineMap(id: string, name: string, tiles: string[], bottomSpawns: Pos[]): MapDef {
-  const height = tiles.length
-  const width = tiles[0].length
-  for (let y = 0; y < height; y++) {
-    if (tiles[y].length !== width) throw new Error(`${id}: row ${y} width mismatch`)
-    for (let x = 0; x < width; x++) {
-      if (tiles[y][x] !== tiles[height - 1 - y][width - 1 - x]) throw new Error(`${id}: not point-symmetric at ${x},${y}`)
-    }
+/**
+ * 正方形フィールド。ビル位置を半分だけ書けば点対称に補完する。
+ * 出撃は対角の角に 2x2（side0 = 左下, side1 = 右上）。
+ */
+function defineMap(id: string, name: string, size: number, buildings: [number, number][]): MapDef {
+  const grid = Array.from({ length: size }, () => Array(size).fill('.'))
+  for (const [x, y] of buildings) {
+    grid[y][x] = '#'
+    grid[size - 1 - y][size - 1 - x] = '#'
   }
-  return { id, name, width, height, tiles, spawns: mirrorSpawns(width, height, bottomSpawns) }
+  const bottomLeft: Pos[] = [
+    { x: 0, y: size - 1 },
+    { x: 1, y: size - 1 },
+    { x: 0, y: size - 2 },
+    { x: 1, y: size - 2 },
+  ]
+  const spawns: [Pos[], Pos[]] = [bottomLeft, bottomLeft.map((p) => ({ x: size - 1 - p.x, y: size - 1 - p.y }))]
+  for (const p of [...spawns[0], ...spawns[1]]) {
+    if (grid[p.y][p.x] !== '.') throw new Error(`${id}: building on spawn ${p.x},${p.y}`)
+  }
+  return { id, name, width: size, height: size, tiles: grid.map((r) => r.join('')), spawns }
 }
 
 export const MAPS: MapDef[] = [
-  defineMap(
-    'city',
-    '市街地',
-    [
-      '..f...f..',
-      '.##.h.##.',
-      '.........',
-      'f..#.#..f',
-      '.h.#...ff',
-      '...ff.#..',
-      '#..f.f..#',
-      '..#.ff...',
-      'ff...#.h.',
-      'f..#.#..f',
-      '.........',
-      '.##.h.##.',
-      '..f...f..',
-    ],
-    [{ x: 1, y: 12 }, { x: 3, y: 12 }, { x: 5, y: 12 }, { x: 7, y: 12 }],
-  ),
-  defineMap(
-    'hill',
-    '中央高地',
-    [
-      '...f.f...',
-      '.f.....f.',
-      '..##.##..',
-      'f.......f',
-      '..f.h.f..',
-      '.#..h..#.',
-      'ff.hhh.ff',
-      '.#..h..#.',
-      '..f.h.f..',
-      'f.......f',
-      '..##.##..',
-      '.f.....f.',
-      '...f.f...',
-    ],
-    [{ x: 1, y: 12 }, { x: 3, y: 12 }, { x: 5, y: 12 }, { x: 7, y: 12 }],
-  ),
+  defineMap('city9', '市街地 9×9', 9, [
+    [5, 1],
+    [2, 2],
+    [6, 3],
+    [1, 4],
+    [4, 4],
+  ]),
+  defineMap('city11', '市街地 11×11', 11, [
+    [7, 1],
+    [3, 2],
+    [8, 3],
+    [5, 3],
+    [2, 5],
+    [5, 5],
+    [9, 2],
+  ]),
+  defineMap('city7', '市街地 7×7', 7, [
+    [4, 1],
+    [2, 2],
+    [3, 3],
+  ]),
 ]
 
 export function getMap(id: string): MapDef {

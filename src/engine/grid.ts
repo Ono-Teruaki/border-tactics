@@ -1,6 +1,6 @@
 import type { MapDef, Pos, RulesConfig, TerrainId, TerrainRule } from './types.ts'
 
-const TERRAIN_CHARS: Record<string, TerrainId> = { '.': 'plain', '#': 'wall', f: 'forest', h: 'high' }
+const TERRAIN_CHARS: Record<string, TerrainId> = { '.': 'plain', '#': 'building' }
 
 export const key = (p: Pos) => `${p.x},${p.y}`
 export const samePos = (a: Pos, b: Pos) => a.x === b.x && a.y === b.y
@@ -19,11 +19,11 @@ export function terrain(map: MapDef, rules: RulesConfig, p: Pos): TerrainRule {
 }
 
 /**
- * 視線判定。始点と終点を除く途中のマスが遮蔽物なら遮られる。
+ * 視線判定。始点と終点を除く途中のマスが遮蔽物（ビル）なら遮られる。seeOver（屋上から）なら遮られない。
  * 線がマスの境界ちょうどを通る場合は「両側とも遮蔽なら遮る」とし、
  * 判定が向き・点対称の鏡像で変わらないようにしている。
  */
-export function lineOfSight(map: MapDef, rules: RulesConfig, a: Pos, b: Pos, ignoreCover = false): boolean {
+export function lineOfSight(map: MapDef, rules: RulesConfig, a: Pos, b: Pos, seeOver = false): boolean {
   const dx = b.x - a.x
   const dy = b.y - a.y
   const steps = Math.max(Math.abs(dx), Math.abs(dy)) * 2
@@ -31,9 +31,7 @@ export function lineOfSight(map: MapDef, rules: RulesConfig, a: Pos, b: Pos, ign
   const blocks = (x: number, y: number) => {
     if ((x === a.x && y === a.y) || (x === b.x && y === b.y)) return false
     const t = terrain(map, rules, { x, y })
-    if (!t.blocksLos) return false
-    if (ignoreCover && t.passable) return false
-    return true
+    return t.blocksLos && !seeOver
   }
   const cands = (v: number) => {
     const f = Math.floor(v)

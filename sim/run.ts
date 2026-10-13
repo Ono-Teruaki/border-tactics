@@ -43,11 +43,8 @@ interface Agg {
   win: Record<VictoryMode, number>
   draw: Record<VictoryMode, number>
   turns: number
-  stances: Record<string, number>
-  attacks: number
-  hits: number
 }
-const newAgg = (): Agg => ({ n: 0, win: { annihilation: 0, killCount: 0, killCost: 0 }, draw: { annihilation: 0, killCount: 0, killCost: 0 }, turns: 0, stances: {}, attacks: 0, hits: 0 })
+const newAgg = (): Agg => ({ n: 0, win: { annihilation: 0, killCount: 0, killCost: 0 }, draw: { annihilation: 0, killCount: 0, killCost: 0 }, turns: 0 })
 /** 「主役側(hero)」視点で集計 */
 function add(agg: Agg, r: MatchStats, hero: Side) {
   agg.n++
@@ -56,9 +53,6 @@ function add(agg: Agg, r: MatchStats, hero: Side) {
     if (r.winner[m] === hero) agg.win[m]++
     if (r.winner[m] === null) agg.draw[m]++
   }
-  for (const [k, v] of Object.entries(r.stances[hero])) agg.stances[k] = (agg.stances[k] ?? 0) + v
-  agg.attacks += r.attacks[hero]
-  agg.hits += r.hits[hero]
 }
 const winCells = (a: Agg) => MODES.map((m) => `${pct(a.win[m] / a.n)} / ${pct(a.draw[m] / a.n)}`).join(' | ')
 const MODE_HEADER = '| 全滅 勝/分 | 撃破数 勝/分 | 撃破コスト 勝/分 |'
@@ -136,28 +130,46 @@ const comps = allComps(classIds, rules.teamSize)
   const classK: Record<string, number> = {}
   const classD: Record<string, number> = {}
   const classN: Record<string, number> = {}
+  const perMap: string[] = []
+  let kills = 0, spottedK = 0, roofK = 0, attacksN = 0, spottedA = 0
   let i = 0
   for (const map of maps) {
+    let fc = 0, fcN = 0, vis = 0, roofOcc = 0, mAnn = 0, mTurns = 0
     for (let k = 0; k < GAMES; k++, i++) {
       const ca = comps[(k * 17 + 3) % comps.length]
       const cb = comps[(k * 29 + 11) % comps.length]
       const r = playMatch(map, rules, [ca, cb], [resolveAi('cpu'), resolveAi('cpu')], SEED + i * 31)
       add(agg, r, 0)
-      if (r.alive[0] === 0 || r.alive[1] === 0) annihil++
+      if (r.alive[0] === 0 || r.alive[1] === 0) (annihil++, mAnn++)
+      mTurns += r.turns
+      for (const s of [0, 1] as Side[]) {
+        kills += r.kills[s]
+        spottedK += r.spottedKills[s]
+        roofK += r.roofKills[s]
+        attacksN += r.attacks[s]
+        spottedA += r.spottedAttacks[s]
+        vis += r.visibleShare[s] / 2
+        roofOcc += r.roofOccupancy[s] / 2
+        if (r.firstContact[s] !== null) (fc += r.firstContact[s]!, fcN++)
+      }
       for (const s of [0, 1] as Side[]) {
         for (const [c, v] of Object.entries(r.classKills[s])) classK[c] = (classK[c] ?? 0) + v
         for (const [c, v] of Object.entries(r.classDeaths[s])) classD[c] = (classD[c] ?? 0) + v
       }
       for (const c of [...ca, ...cb]) classN[c] = (classN[c] ?? 0) + 1
     }
+    perMap.push(`| ${map.name} | ${(mTurns / GAMES).toFixed(1)} | ${pct(mAnn / GAMES)} | ${fcN ? (fc / fcN).toFixed(1) : '-'} | ${pct(vis / GAMES)} | ${pct(roofOcc / GAMES)} |`)
   }
-  const totalSt = Object.values(agg.stances).reduce((a, b) => a + b, 0)
   out()
   out(`- 平均ターン: ${(agg.turns / agg.n).toFixed(1)} / 上限 ${rules.turnLimit}`)
   out(`- 全滅決着率: ${pct(annihil / agg.n)}`)
   out(`- 引き分け率: ${MODES.map((m) => `${m} ${pct(agg.draw[m] / agg.n)}`).join(', ')}`)
-  out(`- 行動選択率(side0): ${Object.entries(agg.stances).map(([k, v]) => `${k} ${pct(v / totalSt)}`).join(', ')}`)
-  out(`- 攻撃命中率(side0): ${pct(agg.hits / Math.max(1, agg.attacks))}`)
+  out(`- 索敵による攻撃（撃った本人は見えていない）: 攻撃の ${pct(spottedA / Math.max(1, attacksN))} / 撃破の ${pct(spottedK / Math.max(1, kills))}`)
+  out(`- 屋上からの撃破: ${pct(roofK / Math.max(1, kills))}`)
+  out()
+  out('| マップ | 平均ターン | 全滅決着 | 初視認ターン | 敵が見えているターン率 | 屋上滞在率 |')
+  out('|---|---|---|---|---|---|')
+  for (const l of perMap) out(l)
   out()
   out('| クラス | 出撃数 | 撃破/出撃 | 被撃破率 |')
   out('|---|---|---|---|')
@@ -201,6 +213,13 @@ if (!flag('quick')) {
   const sd = Math.sqrt(rates.reduce((a, b) => a + (b - mean) ** 2, 0) / rates.length)
   out()
   out(`- 勝ち点率の標準偏差: ${pct(sd)}（小さいほど編成間の格差が小さい）`)
+  const scoutShort = rules.classes.scout?.short
+  if (scoutShort) {
+    const withR = ranked.map(([l], i) => ({ l, i })).filter((x) => x.l.includes(scoutShort))
+    out(`- スカウト入り編成の平均順位: ${(withR.reduce((a, x) => a + x.i + 1, 0) / withR.length).toFixed(1)} / ${ranked.length}（中央 ${((ranked.length + 1) / 2).toFixed(1)}）`)
+    const one = ranked.map(([l], i) => ({ l, i })).filter((x) => x.l.split(scoutShort).length - 1 === 1)
+    out(`- スカウト1枚編成の平均順位: ${(one.reduce((a, x) => a + x.i + 1, 0) / one.length).toFixed(1)}`)
+  }
   json.matrix = Object.fromEntries(ranked.map(([l, s]) => [l, rate(s)]))
   out()
 }

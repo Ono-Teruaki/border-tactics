@@ -11,7 +11,6 @@
   --wall: #0a0d12;
   --forest: #1f4a2c;
   --high: #6b5a35;
-  --cell: min(calc((100vw - 24px) / var(--w, 9)), calc((100dvh - 290px) / var(--h, 13)), 52px);
   font-family: system-ui, -apple-system, 'Hiragino Sans', sans-serif;
   background: var(--bg);
   color: var(--text);
@@ -106,6 +105,7 @@ button:disabled {
 }
 .slot {
   aspect-ratio: 1;
+  max-height: 72px;
   font-size: 20px;
   display: grid;
   place-items: center;
@@ -122,7 +122,7 @@ button:disabled {
   align-items: center;
   column-gap: 10px;
 }
-.classcard .tok {
+.classcard .koma {
   grid-row: span 2;
 }
 .classcard small {
@@ -141,26 +141,41 @@ button:disabled {
   color: #fff;
 }
 
-/* 地形 */
+/* 地形（ミニマップ） */
 .t-plain {
-  background: var(--plain);
+  background: #e2b46a;
 }
-.t-wall {
-  background: var(--wall);
-  background-image: repeating-linear-gradient(45deg, #1b2129 0 3px, transparent 3px 7px);
+.t-building {
+  background: #59626c;
 }
-.t-forest {
-  background: var(--forest);
-  background-image: radial-gradient(circle at 30% 35%, #2f6b3f 0 22%, transparent 23%), radial-gradient(circle at 70% 65%, #2f6b3f 0 22%, transparent 23%);
+.minimap i.s-me {
+  box-shadow: inset 0 0 0 3px var(--me);
 }
-.t-high {
-  background: var(--high);
-  background-image: linear-gradient(135deg, transparent 0 45%, #8a7546 45% 55%, transparent 55%);
+.minimap i.s-en {
+  box-shadow: inset 0 0 0 3px var(--en);
+}
+.koma {
+  display: inline-grid;
+  place-items: center;
+  width: 30px;
+  height: 36px;
+  clip-path: polygon(50% 0, 90% 22%, 100% 100%, 0 100%, 10% 22%);
+  background: linear-gradient(160deg, #f3d49a, #d9a95b);
+  color: #1b1b1b;
+  font: 900 18px 'Hiragino Mincho ProN', 'Yu Mincho', serif;
+  padding-top: 4px;
+  box-sizing: border-box;
+}
+.koma.small {
+  width: 22px;
+  height: 26px;
+  font-size: 13px;
+  vertical-align: middle;
 }
 
 /* 戦闘画面 */
 .battle {
-  max-width: 520px;
+  max-width: 560px;
   margin: 0 auto;
   display: flex;
   flex-direction: column;
@@ -171,6 +186,7 @@ button:disabled {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  gap: 6px;
   font-weight: 700;
 }
 .hud .score {
@@ -179,168 +195,20 @@ button:disabled {
 .mini {
   padding: 2px 10px;
 }
-.boardwrap {
-  display: flex;
-  justify-content: center;
-}
-.board {
+.stage {
   position: relative;
-  display: grid;
-  grid-template-columns: repeat(var(--w), var(--cell));
-  grid-template-rows: repeat(var(--h), var(--cell));
-  gap: 0;
-  border: 1px solid var(--line);
-  touch-action: manipulation;
-}
-.cell {
-  position: relative;
-  box-shadow: inset 0 0 0 0.5px rgba(255, 255, 255, 0.05);
-}
-.cell.fog::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.55);
-}
-.cell.reach::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  background: rgba(74, 163, 255, 0.35);
-  z-index: 1;
-}
-.cell.range::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  background: rgba(255, 93, 93, 0.3);
-  z-index: 1;
-}
-.unit {
-  position: absolute;
-  left: 0;
-  top: 0;
-  width: var(--cell);
-  height: var(--cell);
-  transform: translate(calc(var(--x) * var(--cell)), calc(var(--y) * var(--cell)));
-  transition: transform 0.4s ease, opacity 0.4s;
-  display: grid;
-  place-items: center;
-  z-index: 3;
-  pointer-events: auto;
-}
-.unit .cls {
-  display: grid;
-  place-items: center;
-  width: 72%;
-  height: 72%;
-  border-radius: 50%;
-  font-weight: 800;
-  font-size: calc(var(--cell) * 0.36);
-  color: #fff;
-  grid-area: 1 / 1;
-}
-.unit.me .cls {
-  background: var(--me);
-}
-.unit.en .cls {
-  background: var(--en);
-}
-.unit.sel .cls {
-  outline: 3px solid #fff;
-}
-.unit.hiding .cls {
-  opacity: 0.55;
-  outline: 2px dashed #fff;
-}
-.unit.ghost .cls {
-  background: transparent;
-  border: 2px dashed var(--en);
-  color: var(--en);
-  opacity: 0.75;
-}
-.unit.dead {
-  opacity: 0.25;
-}
-.unit .hp {
-  grid-area: 1 / 1;
-  align-self: end;
-  font-size: calc(var(--cell) * 0.17);
-  line-height: 1;
-  letter-spacing: -1px;
-  text-shadow: 0 0 2px #000;
-}
-.unit .tag {
-  grid-area: 1 / 1;
-  align-self: start;
-  justify-self: end;
-  font-size: calc(var(--cell) * 0.2);
-  background: #000a;
-  border-radius: 4px;
-  padding: 0 2px;
-}
-.fx {
-  position: absolute;
-  inset: 0;
   width: 100%;
-  height: 100%;
-  pointer-events: none;
-  z-index: 4;
+  height: min(56dvh, 90vw);
+  border-radius: 10px;
+  overflow: hidden;
+  border: 1px solid var(--line);
 }
-.fx .mv {
-  stroke: var(--me);
-  stroke-width: 0.08;
-  stroke-dasharray: 0.15 0.1;
+.stage canvas {
+  display: block;
+  touch-action: none;
 }
-.fx .dest {
-  fill: none;
-  stroke: var(--me);
-  stroke-width: 0.07;
-}
-.fx .dest.hide {
-  stroke-dasharray: 0.1 0.1;
-}
-.fx .aim {
-  stroke: var(--en);
-  stroke-width: 0.06;
-  stroke-dasharray: 0.1 0.08;
-}
-.fx .cross {
-  fill: #ff9a9a;
-  font-size: 0.7px;
-  text-anchor: middle;
-}
-.fx .shot {
-  stroke-width: 0.1;
-  animation: shot 0.6s ease-out forwards;
-}
-.fx .shot.me {
-  stroke: #9fd0ff;
-}
-.fx .shot.en {
-  stroke: #ffb0b0;
-}
-.fx .pop {
-  font-size: 0.45px;
-  font-weight: 800;
-  text-anchor: middle;
-  paint-order: stroke;
-  stroke: #000;
-  stroke-width: 0.08px;
-}
-.fx .pop.hit {
-  fill: #ffd34d;
-}
-.fx .pop.miss {
-  fill: #ccc;
-}
-@keyframes shot {
-  from {
-    opacity: 1;
-  }
-  to {
-    opacity: 0.2;
-  }
+.hint.warn {
+  color: #ffb020;
 }
 .panel {
   background: var(--panel);
