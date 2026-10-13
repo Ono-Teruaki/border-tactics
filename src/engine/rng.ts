@@ -29,3 +29,12 @@ export function createRng(seed: number): Rng {
     },
   }
 }
+
+/** 1つのシードから用途別の独立した乱数列を作る（棋譜の再生で解決用の乱数がずれないように） */
+export function seedStreams(seed: number) {
+  return {
+    setup: createRng(seed),
+    ai: createRng((seed ^ 0x9e3779b9) >>> 0),
+    resolve: createRng((seed + 0x632be5ab) >>> 0),
+  }
+}

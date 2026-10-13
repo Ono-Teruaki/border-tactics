@@ -2,7 +2,8 @@ import { AI_PRESETS, CPU_COMPS, decideOrders } from '../engine/ai.ts'
 import { attackRange, canSee, canStrike, classOf, createGame, gameResult, moveAllowance, observe, resolveTurn } from '../engine/game.ts'
 import { allPositions, key, reachable, samePos, terrainId } from '../engine/grid.ts'
 import { MAPS } from '../engine/maps.ts'
-import { createRng, type Rng } from '../engine/rng.ts'
+import { seedStreams, type Rng } from '../engine/rng.ts'
+import type { GameRecord } from '../engine/record.ts'
 import { DEFAULT_RULES } from '../engine/rules.ts'
 import type { GameEvent, GameState, MapDef, Order, Pos, Stance, Unit, VictoryMode } from '../engine/types.ts'
 
@@ -73,9 +74,8 @@ export function showSetup() {
     lastComp = [...comp]
     lastMap = mapId
     const seed = Math.floor(Math.random() * 1e9)
-    const rng = createRng(seed)
-    const cpuComp = rng.pick(CPU_COMPS)
-    new Battle(MAPS.find((m) => m.id === mapId)!, [comp, [...cpuComp]], seed, rng)
+    const cpuComp = seedStreams(seed).setup.pick(CPU_COMPS)
+    new Battle(MAPS.find((m) => m.id === mapId)!, [comp, [...cpuComp]], seed)
   }
   render()
 }
@@ -119,7 +119,7 @@ class Battle {
   orders = new Map<string, Order>()
   selected: string | null = null
   busy = false
-  replay: { turn: number; orders: [Order[], Order[]] }[] = []
+  turns: [Order[], Order[]][] = []
   logLines: string[] = []
   boardEl!: HTMLDivElement
   tokens = new Map<string, HTMLDivElement>()
@@ -130,13 +130,16 @@ class Battle {
   map: MapDef
   comps: [string[], string[]]
   seed: number
-  rng: Rng
+  aiRng: Rng
+  resolveRng: Rng
 
-  constructor(map: MapDef, comps: [string[], string[]], seed: number, rng: Rng) {
+  constructor(map: MapDef, comps: [string[], string[]], seed: number) {
     this.map = map
     this.comps = comps
     this.seed = seed
-    this.rng = rng
+    const streams = seedStreams(seed)
+    this.aiRng = streams.ai
+    this.resolveRng = streams.resolve
     this.state = createGame(map, rules, comps)
     this.build()
     this.log(`敵編成: ${comps[1].map((c) => rules.classes[c].name).join('・')}`)
@@ -272,7 +275,7 @@ class Battle {
     }
     for (const i of Object.values(s.intel[0])) {
       const age = s.turn - 1 - i.turn
-      place(i.unitId, i.cls, i.pos, 'en', i.visible ? '' : 'ghost', phase?.hp?.get(i.unitId) ?? i.hp, rules.classes[i.cls].hp, i.visible ? undefined : age <= 0 ? '今' : `${age}T前`)
+      place(i.unitId, i.cls, i.pos, 'en', i.visible ? '' : 'ghost', (i.visible ? phase?.hp?.get(i.unitId) : undefined) ?? i.hp, rules.classes[i.cls].hp, i.visible ? undefined : age <= 0 ? '今' : `${age}T前`)
     }
     if (phase?.showDead) {
       for (const id of phase.showDead) {
@@ -370,11 +373,11 @@ class Battle {
     this.busy = true
     this.selected = null
     const myOrders = this.me().map((u) => this.orderFor(u))
-    const cpuOrders = decideOrders(observe(this.state, 1), this.rng, AI_PRESETS.cpu)
-    this.replay.push({ turn: this.state.turn, orders: [structuredClone(myOrders), structuredClone(cpuOrders)] })
+    const cpuOrders = decideOrders(observe(this.state, 1), this.aiRng, AI_PRESETS.cpu)
+    this.turns.push([structuredClone(myOrders), structuredClone(cpuOrders)])
     const hpBefore = new Map(this.state.units.map((u) => [u.id, u.hp]))
     const turn = this.state.turn
-    const events = resolveTurn(this.state, [myOrders, cpuOrders], this.rng)
+    const events = resolveTurn(this.state, [myOrders, cpuOrders], this.resolveRng)
     this.orders.clear()
     const dead = new Set(events.filter((e) => e.type === 'bailout').map((e) => e.unitId))
 
@@ -440,7 +443,8 @@ class Battle {
     const r = gameResult(this.state)
     const w = r.winner[rules.victory]
     const title = w === 0 ? '勝利' : w === 1 ? '敗北' : '引き分け'
-    const record = JSON.stringify({ seed: this.seed, map: this.map.id, comps: this.comps, replay: this.replay })
+    const rec: GameRecord = { version: 1, seed: this.seed, map: this.map.id, comps: this.comps, rules, turns: this.turns }
+    const record = JSON.stringify(rec)
     const modal = h(
       'div',
       { class: 'modal' },

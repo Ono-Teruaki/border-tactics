@@ -2,7 +2,8 @@
 import assert from 'node:assert/strict'
 import { createGame, resolveTurn, visibleEnemyIds, gameResult } from '../src/engine/game.ts'
 import { DEFAULT_RULES, mergeRules } from '../src/engine/rules.ts'
-import { createRng } from '../src/engine/rng.ts'
+import { createRng, seedStreams } from '../src/engine/rng.ts'
+import { replayRecord, type GameRecord } from '../src/engine/record.ts'
 import { MAPS } from '../src/engine/maps.ts'
 import { AI_PRESETS, decideOrders } from '../src/engine/ai.ts'
 import { observe } from '../src/engine/game.ts'
@@ -98,6 +99,20 @@ const tests: Record<string, () => void> = {
       return JSON.stringify(gameResult(g)) + JSON.stringify(g.units)
     }
     assert.equal(run(), run())
+  },
+  '棋譜から同じ試合を再生できる'() {
+    const seed = 12345
+    const st = seedStreams(seed)
+    const rec: GameRecord = { version: 1, seed, map: 'city', comps: [['attacker', 'gunner', 'sniper', 'scout'], ['attacker', 'attacker', 'gunner', 'scout']], rules: DEFAULT_RULES, turns: [] }
+    const g = createGame(MAPS[0], DEFAULT_RULES, rec.comps)
+    while (!g.over) {
+      const orders: [Order[], Order[]] = [decideOrders(observe(g, 0), st.ai, AI_PRESETS.aggressive), decideOrders(observe(g, 1), st.ai, AI_PRESETS.cpu)]
+      rec.turns.push(structuredClone(orders))
+      resolveTurn(g, orders, st.resolve)
+    }
+    const r = replayRecord(JSON.parse(JSON.stringify(rec)))
+    assert.deepEqual(gameResult(r), gameResult(g))
+    assert.deepEqual(r.units, g.units)
   },
 }
 

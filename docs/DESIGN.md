@@ -47,6 +47,7 @@
 
 ## シミュレーション
 - `npm test`: 同時解決ルールの仕様テスト
+- `node sim/replay.ts record.json`: 終了画面の「棋譜をコピー」で得たJSONを再生
 - `npm run sim [-- --games N --quick --variant sim/variants/x.json]`
   - 結果は `sim/results/<名前>.md` と `.json` に出る
   - variant にはルールの差分（`rules.ts` と同じ形）と、任意で `"maps": ["city"]` を書ける
@@ -59,3 +60,4 @@
 - スカウトの存在意義（現状は弱い）
 - 敵の出撃位置を既知にするか
 - ターン上限
+- 陣地バイアス: CPU同士の同編成で、上側(side1)が両マップとも勝率+7〜8pt。AIの決定順に原因があるのか、エンジンに原因があるのかを要調査
