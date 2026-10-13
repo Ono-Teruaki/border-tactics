@@ -7,6 +7,7 @@ import { seedStreams, type Rng } from '../engine/rng.ts'
 import { DEFAULT_RULES } from '../engine/rules.ts'
 import type { GameEvent, GameState, Intel, MapDef, Order, Pos, StrikeBlock, Unit, VictoryMode } from '../engine/types.ts'
 import { Board3D, type PieceSpec, type PlanSpec, type TileMark } from './board3d.ts'
+import { damageRange, hitChance } from '../engine/combat.ts'
 
 const rules = DEFAULT_RULES
 const root = document.querySelector<HTMLDivElement>('#app')!
@@ -18,6 +19,7 @@ const BLOCK_LABEL: Record<StrikeBlock, string> = {
   moved: '移動しすぎ',
   unseen: '見失った',
   gone: '既に撃破',
+  down: '撃つ前に撃破された',
 }
 
 const h = (tag: string, attrs: Record<string, any> = {}, ...children: (Node | string | null | false)[]) => {
@@ -66,7 +68,11 @@ export function showSetup() {
               { class: 'classcard', onclick: () => (comp.length < rules.teamSize && comp.push(c.id), render()) },
               h('span', { class: 'pico' }, c.short),
               h('b', {}, c.name),
-              h('small', {}, `HP${c.hp} 移${c.move} 射${c.range} 攻${c.damage} 視${c.vision} コスト${c.cost}${c.attackMaxMove < 10 ? ` ※${c.attackMaxMove + 1}マス以上動くと撃てない` : ''}`),
+              h(
+                'small',
+                {},
+                `HP${c.hp} 攻${c.atk} 守${c.def} 速${c.spd}${c.shots > 1 ? ` ${c.shots}連射` : ''} ／ 移${c.move} 射${c.range} 視${c.vision} 命中${c.accuracy}%${c.falloff ? `(-${c.falloff}/マス)` : ''} ／ コスト${c.cost}${c.attackMaxMove < 10 ? ` ※${c.attackMaxMove + 1}マス以上動くと撃てない` : ''}`,
+              ),
             ),
           ),
         ),
@@ -106,7 +112,9 @@ function showHelp() {
         h('li', {}, '両軍が同時に「移動先」と「狙う敵」を決め、一斉に動きます。'),
         h('li', {}, '狙う敵は、今見えている敵から選びます。移動後にその敵が射程内・射線が通っていて、味方の誰かに見えていれば命中します。偵察で見つけた敵を後衛が撃てます。'),
         h('li', {}, '遮蔽: 射線上にビルがあると撃てません（屋上からでも）。屋上から、こちら側の壁に張り付いている地上の敵は撃てません。'),
-        h('li', {}, 'ダメージは同時に入ります（相打ちあり）。撃ったユニットは位置が相手にバレます。'),
+        h('li', {}, '交戦は「速」の高い順。先に撃破されたユニットは撃てません。撃ったユニットは位置が相手にバレます。'),
+        h('li', {}, 'ダメージ = 攻² ÷ (攻 + 守) ± 15%。ガンナーは小さな弾を3連射。'),
+        h('li', {}, '命中率は距離が遠いほど下がり、相手がこちら側のビルに張り付いていると（遮蔽:半）、斜め側にビルがあると（遮蔽:小）さらに下がります。屋上から撃つと上がります。'),
         h('li', {}, '同じマスに入ろうとすると弾かれて元の位置に戻ります。敵とぶつかると互いの位置がバレます。'),
         h('li', {}, 'ビル: 地上の視線を遮る。登ると（移動コスト2）視界+2・射程+1、ビル越しに「見る」ことはできる。'),
         h('li', {}, '盤面: ピンチ / ホイール / ＋－ボタンでズーム、ズーム中はドラッグで移動。'),
@@ -155,6 +163,9 @@ class Battle {
     this.logEl = h('div', { class: 'log' }) as HTMLDivElement
     root.replaceChildren(h('div', { class: 'battle' }, this.header, stage, this.panel, this.logEl))
     this.board = new Board3D(stage, map)
+    this.captionEl = h('div', { class: 'caption' }) as HTMLDivElement
+    this.captionEl.hidden = true
+    stage.append(this.captionEl)
     this.board.onTap = (p) => this.tap(p)
     // デバッグ用（自動テストから使う）
     ;(window as any).__bt = {
@@ -189,6 +200,16 @@ class Battle {
     const d = this.destOf(u)
     if (!canFireAfterMove(rules, u, d)) return 'moved'
     return strikeCheck(this.map, rules, d, t.pos, attackRange(this.map, rules, u.cls, d))
+  }
+
+  /** 敵が留まった場合の命中率・ダメージ予測 */
+  predictText(u: Unit, t: Intel): string {
+    const c = classOf(rules, u)
+    const tc = rules.classes[t.cls]
+    const { chance, cover } = hitChance(this.map, rules, c, this.destOf(u), t.pos)
+    const [lo, hi] = damageRange(rules, c.atk, tc.def)
+    const coverText = cover === 'half' ? '（遮蔽:半）' : cover === 'light' ? '（遮蔽:小）' : ''
+    return `狙い: 敵${tc.name} — 命中率${chance}%${coverText} × ${c.shots}発、1発${lo === hi ? lo : `${lo}〜${hi}`}ダメージ（速${c.spd} vs ${tc.spd}）`
   }
 
   log(s: string) {
@@ -334,14 +355,14 @@ class Battle {
       const block = this.predictBlock(sel)
       const visibleEnemies = Object.values(this.shownIntel).some((i) => i.visible)
       children.push(
-        h('div', { class: 'info' }, h('span', { class: 'pico small' }, c.short), h('b', {}, ` ${c.name}`), ` HP${sel.hp}/${c.hp} 移${c.move} 射${c.range}${onRoof ? '+1' : ''} 視${c.vision}${onRoof ? '+2' : ''}`),
+        h('div', { class: 'info' }, h('span', { class: 'pico small' }, c.short), h('b', {}, ` ${c.name}`), ` HP${sel.hp}/${c.hp} 攻${c.atk} 守${c.def} 速${c.spd} 移${c.move} 射${c.range}${onRoof ? '+1' : ''} 視${c.vision}${onRoof ? '+2' : ''}`),
         h(
           'div',
           { class: `hint ${t && block ? 'warn' : ''}` },
           t
             ? block
               ? `狙い: 敵${rules.classes[t.cls].name} — 今の位置のままだと「${BLOCK_LABEL[block]}」`
-              : `狙い: 敵${rules.classes[t.cls].name} — 今の位置のままなら命中`
+              : this.predictText(sel, t)
             : visibleEnemies
               ? '移動先（青）をタップ → 狙う敵（赤い駒）をタップ。狙わなければ撃ちません'
               : '移動先（青）をタップ。敵が見えていないので狙えません',
@@ -368,52 +389,117 @@ class Battle {
     const myOrders: Order[] = this.me().map((u) => ({ unitId: u.id, dest: { ...this.destOf(u) }, target: this.orders.get(u.id)?.target }))
     const cpuOrders = decideOrders(observe(this.state, 1), this.aiRng, AI_PRESETS.cpu)
     this.turns.push([structuredClone(myOrders), structuredClone(cpuOrders)])
-    const hpBefore = new Map(this.state.units.filter((u) => u.side === 0).map((u) => [u.id, u.hp]))
-    const prevIntel = this.shownIntel
+    // 解決前の表示状態（プレイヤーが知っている情報だけ）
+    const disp = new Map<string, PieceSpec>(this.pieceSpecs(this.shownIntel).map((p) => [p.id, { ...p, selected: false, targeted: false }]))
     const turn = this.state.turn
     const events = resolveTurn(this.state, [myOrders, cpuOrders], this.resolveRng)
+    const finalIntel = this.intelMap()
     this.orders.clear()
     this.board.setPlans([])
-    const turnEvents = events
     this.board.setMarks(new Map())
-    this.panel.replaceChildren(h('div', { class: 'hint' }, '解決中…'))
+    this.board.speed = this.playSpeed
+    this.renderPlaybackPanel()
+    const show = () => this.board.syncPieces([...disp.values()])
+    show()
 
-    // ① 移動（敵は移動後に見えた位置／撃って露見した位置。HPは既知の値のまま）
-    const midIntel: Record<string, Intel> = {}
-    for (const [id, i] of Object.entries(this.intelMap())) midIntel[id] = { ...i, hp: prevIntel[id]?.hp ?? null }
+    const unitOf = (id: string) => this.state.units.find((x) => x.id === id)!
+    const isMine = (id: string) => id.startsWith('0-')
+    /** 敵の動きは、この手で見えた／露見したものだけ見せる */
+    const enemySeen = (id: string) => events.some((e) => e.type === 'bailout' && e.unitId === id) || finalIntel[id]?.turn === turn
+    const reveal = (id: string, pos: Pos) => {
+      const u = unitOf(id)
+      const c = classOf(rules, u)
+      const cur = disp.get(id)
+      disp.set(id, { id, side: 1, cls: u.cls, letter: c.short, hp: cur?.hp ?? null, maxHp: c.hp, pos: cur?.pos ?? pos, ghost: false })
+    }
+
+    // ① 移動：味方 → 見えた敵 の順に1体ずつ
+    const moves = events.filter((e) => e.type === 'move' || e.type === 'bounce')
+    const ordered = [...moves.filter((e) => isMine(e.unitId)), ...moves.filter((e) => !isMine(e.unitId) && enemySeen(e.unitId))]
+    for (const e of ordered) {
+      if (e.type === 'move') {
+        if (!isMine(e.unitId)) {
+          reveal(e.unitId, e.from)
+          show()
+        }
+        const from = disp.get(e.unitId)!.pos
+        this.caption(`${this.name(e.unitId)} 移動`)
+        await this.board.focus([from, e.to], 380)
+        await this.board.movePiece(e.unitId, e.to)
+        disp.get(e.unitId)!.pos = e.to
+      } else if (e.type === 'bounce') {
+        const tried = (isMine(e.unitId) ? myOrders : cpuOrders).find((o) => o.unitId === e.unitId)!.dest
+        if (!isMine(e.unitId)) {
+          reveal(e.unitId, e.at)
+          show()
+        }
+        this.caption(`${this.name(e.unitId)} 移動を阻まれた${e.contact ? '（敵と接触！）' : ''}`)
+        await this.board.focus([e.at, tried], 380)
+        await this.board.bouncePiece(e.unitId, tried)
+      }
+    }
+
+    // ② 交戦：速の高い順（イベント順）
     for (const e of events) {
-      if (e.type === 'bailout' && e.unitId.startsWith('1-')) {
-        const u = this.state.units.find((x) => x.id === e.unitId)!
-        midIntel[u.id] = { unitId: u.id, cls: u.cls, pos: e.at, hp: prevIntel[u.id]?.hp ?? null, turn, visible: true }
+      if (e.type === 'attack') {
+        if (!isMine(e.unitId)) {
+          reveal(e.unitId, e.from)
+          disp.get(e.unitId)!.pos = e.from
+        }
+        if (!isMine(e.hitId) && !disp.get(e.hitId)) reveal(e.hitId, e.target)
+        show()
+        const a = classOf(rules, unitOf(e.unitId))
+        const hits = e.shots.filter((x) => x.hit).length
+        this.caption(
+          `${this.name(e.unitId)}（速${a.spd}）→ ${this.name(e.hitId)}　命中率${e.chance}%${e.cover !== 'none' ? `（遮蔽:${e.cover === 'half' ? '半' : '小'}）` : ''}${e.shots.length > 1 ? `　${hits}/${e.shots.length}発` : ''}`,
+        )
+        await this.board.focus([e.from, e.target], 420)
+        await this.board.volley(e.from, e.target, isMine(e.unitId) ? 0 : 1, e.shots, e.spotted && isMine(e.unitId))
+        const t = disp.get(e.hitId)
+        if (t) t.hp = e.targetHp
+        show()
+      } else if (e.type === 'noshot' && isMine(e.unitId)) {
+        const u = unitOf(e.unitId)
+        this.caption(`${this.name(e.unitId)} 撃てず：${BLOCK_LABEL[e.reason]}`)
+        await this.board.focus([disp.get(e.unitId)?.pos ?? u.pos], 350)
+        await this.board.popup(disp.get(e.unitId)?.pos ?? u.pos, `× ${BLOCK_LABEL[e.reason]}`, '#c07a00', 800)
+      } else if (e.type === 'bailout') {
+        this.caption(`💥 ${this.name(e.unitId)} ベイルアウト`)
+        await this.board.bailout(e.at, isMine(e.unitId) ? 0 : 1)
+        disp.delete(e.unitId)
+        show()
       }
     }
-    await this.board.syncPieces(this.pieceSpecs(midIntel, hpBefore), true)
 
-    // ② 射撃（自軍の不発は理由を表示）
-    for (const e of turnEvents) {
-      if (e.type === 'noshot' && e.unitId.startsWith('0-')) {
-        const u = this.state.units.find((x) => x.id === e.unitId)!
-        this.board.popup(u.pos, `× ${BLOCK_LABEL[e.reason]}`, '#c07a00', 1000)
-      }
-    }
-    const shots = events.filter((e): e is Extract<GameEvent, { type: 'attack' }> => e.type === 'attack')
-    if (shots.length) {
-      await Promise.all(
-        shots.map((e) => {
-          const side = e.unitId.startsWith('0-') ? 0 : 1
-          this.board.popup(e.target, `-${e.damage}`, '#ffd34d')
-          return this.board.shoot(e.from, e.target, side, e.spotted && side === 0)
-        }),
-      )
-    }
-    // ③ ベイルアウト
-    const outs = events.filter((e): e is Extract<GameEvent, { type: 'bailout' }> => e.type === 'bailout')
-    if (outs.length) await Promise.all(outs.map((e) => this.board.bailout(e.at, e.unitId.startsWith('0-') ? 0 : 1)))
-
+    this.caption('')
+    await this.board.overview(450)
+    this.board.speed = 1
     this.busy = false
     this.render()
     this.logTurn(turn, events)
     if (this.state.over) this.showEnd()
+  }
+
+  playSpeed = 1
+  captionEl: HTMLDivElement | null = null
+
+  caption(text: string) {
+    if (!this.captionEl) return
+    this.captionEl.textContent = text
+    this.captionEl.hidden = !text
+  }
+
+  renderPlaybackPanel() {
+    const speedBtn = h('button', { class: 'chip' }, `速度 ×${this.playSpeed}`)
+    speedBtn.addEventListener('click', () => {
+      this.playSpeed = this.playSpeed === 1 ? 2 : this.playSpeed === 2 ? 3 : 1
+      this.board.speed = this.playSpeed
+      speedBtn.textContent = `速度 ×${this.playSpeed}`
+    })
+    this.panel.replaceChildren(
+      h('div', { class: 'hint' }, '再生中… 移動 → 交戦（速の高い順）'),
+      h('div', { class: 'row' }, speedBtn, h('button', { class: 'chip grow', onclick: () => (this.board.speed = 40) }, 'スキップ ▶▶')),
+    )
   }
 
   name(id: string) {
@@ -427,7 +513,10 @@ class Battle {
       const u = this.state.units.find((x) => x.id === e.unitId)!
       if (e.type === 'bounce' && (u.side === 0 || e.contact)) lines.push(`${this.name(e.unitId)}: 移動を阻まれた${e.contact ? '（敵と接触！）' : ''}`)
       if (e.type === 'noshot' && u.side === 0) lines.push(`${this.name(e.unitId)}: 撃てず（${BLOCK_LABEL[e.reason]}）`)
-      if (e.type === 'attack') lines.push(`${this.name(e.unitId)} → ${this.name(e.hitId)} に命中 -${e.damage}${e.spotted && u.side === 0 ? '（味方の索敵）' : ''}`)
+      if (e.type === 'attack') {
+        const hits = e.shots.filter((x) => x.hit).length
+        lines.push(`${this.name(e.unitId)} → ${this.name(e.hitId)}: ${hits}/${e.shots.length}発命中 -${e.damage}（命中率${e.chance}%）${e.spotted && u.side === 0 ? '［索敵連携］' : ''}`)
+      }
       if (e.type === 'bailout') lines.push(`💥 ${this.name(e.unitId)} ベイルアウト`)
     }
     if (!lines.length) lines.push('交戦なし')

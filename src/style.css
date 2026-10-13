@@ -253,3 +253,20 @@ button:disabled {
   font-size: 14px;
   line-height: 1.6;
 }
+.caption {
+  position: absolute;
+  left: 50%;
+  bottom: 10px;
+  transform: translateX(-50%);
+  max-width: calc(100% - 24px);
+  background: rgba(255, 255, 255, 0.92);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 5px 12px;
+  font-size: 12px;
+  line-height: 1.4;
+  font-weight: 700;
+  box-shadow: 0 2px 8px rgba(20, 30, 50, 0.12);
+  pointer-events: none;
+  text-align: center;
+}

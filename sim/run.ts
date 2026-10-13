@@ -133,6 +133,7 @@ const comps = allComps(classIds, rules.teamSize)
   const perMap: string[] = []
   let kills = 0, spottedK = 0, roofK = 0, attacksN = 0, spottedA = 0
   const noshot: Record<string, number> = {}
+  let sHit = 0, sFired = 0
   let i = 0
   for (const map of maps) {
     let fc = 0, fcN = 0, vis = 0, roofOcc = 0, mAnn = 0, mTurns = 0
@@ -144,6 +145,8 @@ const comps = allComps(classIds, rules.teamSize)
       if (r.alive[0] === 0 || r.alive[1] === 0) (annihil++, mAnn++)
       mTurns += r.turns
       for (const [k, v] of Object.entries(r.noshot)) noshot[k] = (noshot[k] ?? 0) + v
+      sHit += r.shotsHit
+      sFired += r.shotsFired
       for (const s of [0, 1] as Side[]) {
         kills += r.kills[s]
         spottedK += r.spottedKills[s]
@@ -169,7 +172,8 @@ const comps = allComps(classIds, rules.teamSize)
   out(`- 索敵による攻撃（撃った本人は見えていない）: 攻撃の ${pct(spottedA / Math.max(1, attacksN))} / 撃破の ${pct(spottedK / Math.max(1, kills))}`)
   out(`- 屋上からの撃破: ${pct(roofK / Math.max(1, kills))}`)
   const nsTotal = Object.values(noshot).reduce((a, b) => a + b, 0)
-  const NS: Record<string, string> = { range: '射程外', blocked: '射線上にビル', cover: '張り付き遮蔽', moved: '移動しすぎ', unseen: '見失った', gone: '既に撃破' }
+  const NS: Record<string, string> = { range: '射程外', blocked: '射線上にビル', cover: '張り付き遮蔽', moved: '移動しすぎ', unseen: '見失った', gone: '既に撃破', down: '撃つ前に撃破された' }
+  out(`- 弾の命中率: ${pct(sHit / Math.max(1, sFired))}`)
   out(`- 狙い撃ちの成立率: ${pct(attacksN / Math.max(1, attacksN + nsTotal))}（不成立の内訳: ${Object.entries(noshot).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${NS[k] ?? k} ${pct(v / nsTotal)}`).join(', ')}）`)
   out()
   out('| マップ | 平均ターン | 全滅決着 | 初視認ターン | 敵が見えているターン率 | 屋上滞在率 |')

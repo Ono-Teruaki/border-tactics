@@ -91,6 +91,8 @@ export class Board3D {
   private pan = new THREE.Vector3()
   private baseDist = 10
   private resizeObs: ResizeObserver
+  /** 演出の再生速度（スキップ時は大きくする） */
+  speed = 1
 
   constructor(container: HTMLElement, map: MapDef) {
     this.container = container
@@ -322,6 +324,93 @@ export class Board3D {
   }
 
   // ---------- 演出 ----------
+  wait(ms: number): Promise<void> {
+    return this.tween(ms, () => {})
+  }
+
+  /** 1体だけ移動させる */
+  movePiece(id: string, to: Pos, dur = 520): Promise<void> {
+    const g = this.pieces.get(id)
+    if (!g) return Promise.resolve()
+    const from = g.position.clone()
+    const target = this.world(to)
+    ;(g.userData.body as THREE.Mesh).userData.tile = to
+    return this.tween(dur, (t) => {
+      const e = t < 0.5 ? 2 * t * t : 1 - (-2 * t + 2) ** 2 / 2
+      g.position.lerpVectors(from, target, e)
+      g.position.y += Math.sin(Math.PI * t) * 0.35
+    })
+  }
+
+  /** 移動しようとして弾かれる */
+  bouncePiece(id: string, toward: Pos, dur = 600): Promise<void> {
+    const g = this.pieces.get(id)
+    if (!g) return Promise.resolve()
+    const from = g.position.clone()
+    const mid = from.clone().lerp(this.world(toward), 0.45)
+    return this.tween(dur, (t) => {
+      const k = t < 0.5 ? t * 2 : (1 - t) * 2
+      g.position.lerpVectors(from, mid, k)
+      g.position.y += Math.sin(Math.PI * k) * 0.2
+    })
+  }
+
+  /** 指定したマス群が収まるようにカメラを寄せる */
+  focus(points: Pos[], dur = 450): Promise<void> {
+    const xs = points.map((p) => p.x - this.half)
+    const zs = points.map((p) => p.y - this.half)
+    const cx = (Math.min(...xs) + Math.max(...xs)) / 2
+    const cz = (Math.min(...zs) + Math.max(...zs)) / 2
+    const span = Math.max(Math.max(...xs) - Math.min(...xs), Math.max(...zs) - Math.min(...zs)) + 3
+    const z = Math.min(2.6, Math.max(1, this.map.width / span))
+    return this.cameraTo(new THREE.Vector3(cx, 0, cz), z, dur)
+  }
+
+  overview(dur = 450): Promise<void> {
+    return this.cameraTo(new THREE.Vector3(), 1, dur)
+  }
+
+  private cameraTo(pan: THREE.Vector3, zoom: number, dur: number): Promise<void> {
+    const p0 = this.pan.clone()
+    const z0 = this.zoom
+    return this.tween(dur, (t) => {
+      const e = 1 - (1 - t) ** 3
+      this.pan.lerpVectors(p0, pan, e)
+      this.zoom = z0 + (zoom - z0) * e
+      this.updateCamera()
+    })
+  }
+
+  /** 弾ごとに発射して命中/ミスを表示 */
+  async volley(from: Pos, to: Pos, side: 0 | 1, shots: { hit: boolean; damage: number }[], spotted: boolean): Promise<void> {
+    if (spotted) this.popup(from, '索敵連携', '#1f9d55', 900)
+    for (let i = 0; i < shots.length; i++) {
+      const s = shots[i]
+      const a = this.world(from, 0.5)
+      const b = this.world(to, 0.45)
+      if (!s.hit) {
+        // 外れ弾は少しそらす
+        const off = new THREE.Vector3(-(b.z - a.z), 0, b.x - a.x).normalize().multiplyScalar((i % 2 ? 1 : -1) * 0.45)
+        b.add(off).add(b.clone().sub(a).normalize().multiplyScalar(0.5))
+      }
+      this.beam(a, b, side === 0 ? C.me : C.en, 380)
+      this.popup(to, s.hit ? `-${s.damage}` : 'MISS', s.hit ? '#e0443e' : '#8a93a0', 800, (i - (shots.length - 1) / 2) * 0.45)
+      await this.wait(shots.length > 1 ? 220 : 380)
+    }
+    await this.wait(300)
+  }
+
+  private beam(a: THREE.Vector3, b: THREE.Vector3, color: number, dur: number) {
+    const beam = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, a.distanceTo(b), 8), new THREE.MeshBasicMaterial({ color, transparent: true }))
+    beam.position.copy(a.clone().lerp(b, 0.5))
+    beam.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), b.clone().sub(a).normalize())
+    this.fxGroup.add(beam)
+    this.tween(dur, (t) => {
+      ;(beam.material as THREE.MeshBasicMaterial).opacity = 1 - t
+      beam.scale.x = beam.scale.z = 1 + t * 2
+    }).then(() => void this.fxGroup.remove(beam))
+  }
+
   shoot(from: Pos, to: Pos, side: 0 | 1, spotted: boolean): Promise<void> {
     const a = this.world(from, 0.5)
     const b = this.world(to, 0.45)
@@ -336,9 +425,10 @@ export class Board3D {
     }).then(() => void this.fxGroup.remove(beam))
   }
 
-  popup(at: Pos, text: string, color: string, dur = 900): Promise<void> {
+  popup(at: Pos, text: string, color: string, dur = 900, dx = 0): Promise<void> {
     const sprite = textSprite(text, color)
     const p = this.world(at, 1.3)
+    p.x += dx
     sprite.position.copy(p)
     this.fxGroup.add(sprite)
     return this.tween(dur, (t) => {
@@ -506,7 +596,7 @@ export class Board3D {
 
   private tween(dur: number, update: (t: number) => void): Promise<void> {
     return new Promise((resolve) => {
-      this.tweens.push({ start: performance.now(), dur, update, resolve })
+      this.tweens.push({ start: performance.now(), dur: Math.max(1, dur / this.speed), update, resolve })
       this.loop()
     })
   }
@@ -610,14 +700,21 @@ function tagTexture(spec: PieceSpec) {
     g.font = '700 22px system-ui, sans-serif'
     g.fillText(spec.label, 100, H / 2 + 1)
   } else {
-    const n = spec.maxHp
-    const x0 = 56
-    const w = (W - 18 - x0) / n
-    for (let i = 0; i < n; i++) {
-      roundRect(g, x0 + i * w + 2, H / 2 - 8, w - 4, 16, 4)
-      g.fillStyle = spec.hp === null ? 'rgba(150,150,150,0.5)' : i < spec.hp ? accent : spec.side === 0 ? '#dfe3ea' : '#4a505a'
+    const x0 = 54
+    const bw = 62
+    roundRect(g, x0, H / 2 - 8, bw, 16, 6)
+    g.fillStyle = spec.side === 0 ? '#dfe3ea' : '#4a505a'
+    g.fill()
+    if (spec.hp !== null && spec.hp > 0) {
+      const r = Math.max(0, Math.min(1, spec.hp / spec.maxHp))
+      roundRect(g, x0, H / 2 - 8, Math.max(12, bw * r), 16, 6)
+      g.fillStyle = r > 0.5 ? accent : r > 0.25 ? '#f0a020' : '#e0443e'
       g.fill()
     }
+    g.fillStyle = spec.side === 0 ? '#1d2330' : '#ffffff'
+    g.font = '800 22px system-ui, sans-serif'
+    g.textAlign = 'right'
+    g.fillText(spec.hp === null ? '?' : String(spec.hp), W - 12, H / 2 + 1)
   }
   return canvasTex(c)
 }

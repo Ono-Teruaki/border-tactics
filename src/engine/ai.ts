@@ -1,3 +1,4 @@
+import { expectedDamage } from './combat.ts'
 import { attackRange, canSee, canStrike, classOf, visionRange } from './game.ts'
 import { dist, key, reachable, terrain } from './grid.ts'
 import type { Rng } from './rng.ts'
@@ -90,17 +91,22 @@ function bestOrder(obs: Observation, u: Unit, known: Known[], reserved: Set<stri
         if (e.age > 0) continue
         if (!canStrike(map, rules, pos, e.pos, ar)) continue
         const ec = classOf(rules, e)
-        const kill = (e.hp ?? ec.hp) <= cls.damage ? 1 + ec.cost * 0.5 : 1
-        const v = cls.damage * kill * 0.6
+        const hp = e.hp ?? ec.hp
+        const exp = expectedDamage(map, rules, cls, ec, pos, e.pos)
+        const kill = exp >= hp ? 1 + ec.cost * 0.5 : 1
+        const v = Math.min(1, exp / hp) * 3 * kill * 0.6
         if (v > fire) (fire = v), (target = e.unitId)
       }
     }
 
     // 被弾リスク：敵が移動して射程に入れられるか
+    // 遮蔽を考慮：敵の現在位置から見た自分の隠れ具合で期待被ダメージが下がる
     let threat = 0
     for (const e of threats) {
       const ec = classOf(rules, e)
-      if (dist(pos, e.pos) <= ec.move + ec.range + 1 + e.age) threat += ec.damage * (e.age === 0 ? 1 : 0.5) * (cls.hp <= ec.damage ? 1.5 : 1)
+      if (dist(pos, e.pos) > ec.move + ec.range + 1 + e.age) continue
+      const exp = expectedDamage(map, rules, ec, cls, e.pos, pos)
+      threat += Math.min(1.5, (exp / u.hp) * 3) * (e.age === 0 ? 1 : 0.5)
     }
 
     // 索敵：敵の（最終）位置を視界に収める

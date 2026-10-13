@@ -13,10 +13,20 @@ export interface UnitClass {
   /** 駒に書く一文字 */
   kanji: string
   short: string
+  /** 以下の能力値は 30 以下で設定する */
   hp: number
+  atk: number
+  def: number
+  /** 速: 交戦時に高い順に攻撃する */
+  spd: number
+  /** 1手で撃つ弾数 */
+  shots: number
+  /** 基本命中率（%） */
+  accuracy: number
+  /** 距離1マスごとの命中率低下（%） */
+  falloff: number
   move: number
   range: number
-  damage: number
   vision: number
   /** 撃破されたときに相手に入るポイント */
   cost: number
@@ -50,6 +60,20 @@ export interface RulesConfig {
     /** 屋上から、撃ち手側のビルに張り付いている地上の敵は撃てない */
     wallHug: boolean
   }
+  combat: {
+    /** ダメージの乱数幅（±割合） */
+    variance: number
+    /** 遮蔽による命中率低下（%） */
+    coverHalf: number
+    coverLight: number
+    /** 屋上から地上へ撃つときの命中率ボーナス / 地上から屋上へのペナルティ */
+    highGround: number
+    lowGround: number
+    minHit: number
+    maxHit: number
+    /** 同じ速のときの順番決めに使う乱数幅 */
+    initiativeJitter: number
+  }
   /** 攻撃したユニットの位置は相手に露見する */
   attackReveals: boolean
   /** 敵と同じマスに移動しようとして弾かれたとき、互いの位置が露見する */
@@ -82,7 +106,12 @@ export interface Order {
   target?: string
 }
 
-export type StrikeBlock = 'range' | 'blocked' | 'cover' | 'moved' | 'unseen' | 'gone'
+export type StrikeBlock = 'range' | 'blocked' | 'cover' | 'moved' | 'unseen' | 'gone' | 'down'
+
+export interface ShotResult {
+  hit: boolean
+  damage: number
+}
 
 export interface Intel {
   unitId: string
@@ -98,7 +127,22 @@ export type GameEvent =
   | { type: 'move'; unitId: string; from: Pos; to: Pos }
   | { type: 'bounce'; unitId: string; at: Pos; contact: boolean }
   /** spotted: 撃った本人には見えておらず、味方の索敵で撃てた */
-  | { type: 'attack'; unitId: string; from: Pos; target: Pos; hitId: string; damage: number; spotted: boolean }
+  | {
+      type: 'attack'
+      unitId: string
+      from: Pos
+      target: Pos
+      hitId: string
+      /** 命中率（%） */
+      chance: number
+      cover: 'none' | 'light' | 'half'
+      shots: ShotResult[]
+      /** 合計ダメージ */
+      damage: number
+      /** 攻撃後の対象HP */
+      targetHp: number
+      spotted: boolean
+    }
   /** 狙ったが撃てなかった */
   | { type: 'noshot'; unitId: string; targetId: string; reason: StrikeBlock }
   | { type: 'bailout'; unitId: string; at: Pos }

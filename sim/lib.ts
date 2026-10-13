@@ -24,6 +24,9 @@ export interface MatchStats extends GameResult {
   visibleShare: [number, number]
   /** 狙ったが撃てなかった理由の内訳 */
   noshot: Record<string, number>
+  /** 弾単位の命中数 / 発射数 */
+  shotsHit: number
+  shotsFired: number
 }
 
 export function playMatch(map: MapDef, rules: RulesConfig, comps: [string[], string[]], ais: [AiParams, AiParams], seed: number): MatchStats {
@@ -37,6 +40,8 @@ export function playMatch(map: MapDef, rules: RulesConfig, comps: [string[], str
   const roofUnitTurns = z(), unitTurns = z(), visTurns = z()
   const firstContact: [number | null, number | null] = [null, null]
   const noshot: Record<string, number> = {}
+  let shotsHit = 0
+  let shotsFired = 0
   const byId = new Map(g.units.map((u) => [u.id, u]))
   while (!g.over) {
     const orders = ([0, 1] as Side[]).map((s) => decideOrders(observe(g, s), rng, ais[s])) as [any, any]
@@ -51,6 +56,8 @@ export function playMatch(map: MapDef, rules: RulesConfig, comps: [string[], str
         if (e.spotted) spottedAttacks[u.side]++
         if (roof) roofAttacks[u.side]++
         killer.set(e.hitId, { cls: u.cls, spotted: e.spotted, roof })
+        shotsFired += e.shots.length
+        shotsHit += e.shots.filter((x) => x.hit).length
       }
       if (e.type === 'noshot') noshot[e.reason] = (noshot[e.reason] ?? 0) + 1
       if (e.type === 'bailout') {
@@ -89,6 +96,8 @@ export function playMatch(map: MapDef, rules: RulesConfig, comps: [string[], str
     firstContact,
     visibleShare: [visTurns[0] / turns, visTurns[1] / turns],
     noshot,
+    shotsHit,
+    shotsFired,
   }
 }
 

@@ -1,6 +1,7 @@
 import { dist, inBounds, key, lineOfSight, reachable, samePos, terrain, terrainId } from './grid.ts'
 import type { Rng } from './rng.ts'
-import type { GameEvent, GameResult, GameState, MapDef, Observation, Order, Pos, RulesConfig, Side, StrikeBlock, Unit, UnitClass, VictoryMode } from './types.ts'
+import { hitChance, rollDamage } from './combat.ts'
+import type { GameEvent, GameResult, GameState, MapDef, Observation, Order, Pos, RulesConfig, ShotResult, Side, StrikeBlock, Unit, UnitClass, VictoryMode } from './types.ts'
 
 export function createGame(map: MapDef, rules: RulesConfig, comps: [string[], string[]]): GameState {
   const units: Unit[] = []
@@ -118,11 +119,12 @@ function reveal(state: GameState, toSide: Side, u: Unit, turn: number) {
  * 1ターンを同時解決する（state を直接更新）。
  * 1) 移動: 全員が同時に目的地へ。同じマスに複数が来たら、移動してきた側が元の位置へ弾かれる（連鎖も解決）。
  *    すれ違い・入れ替わりは許可（経路は問わない）。
- * 2) 射撃: 命令で指定した敵が、移動後に見えていて（sharedTargeting なら味方の視界でも可）
- *    射程・射線・遮蔽をクリアしていれば命中。ダメージはまとめて適用（相打ちあり）。
- * 3) HP0 はベイルアウト。攻撃した位置は相手に露見。
+ * 2) 射撃: 速の高い順に解決。指定した敵が移動後に見えていて（sharedTargeting なら味方の視界でも可）
+ *    射程・射線・遮蔽をクリアしていれば、弾数ぶん命中判定（距離・隠れ具合で命中率が下がる）。
+ *    ダメージ = 攻² / (攻 + 守) × 乱数。HP0 で即ベイルアウトし、まだ撃っていなければ撃てない。
+ * 3) 攻撃した位置は相手に露見。
  */
-export function resolveTurn(state: GameState, orders: [Order[], Order[]], _rng: Rng): GameEvent[] {
+export function resolveTurn(state: GameState, orders: [Order[], Order[]], rng: Rng): GameEvent[] {
   if (state.over) return []
   const { map, rules } = state
   const events: GameEvent[] = []
@@ -170,17 +172,19 @@ export function resolveTurn(state: GameState, orders: [Order[], Order[]], _rng: 
     for (const u of alive) if (contact.has(u.id)) reveal(state, (1 - u.side) as Side, u, state.turn)
   }
 
-  // --- 射撃（同時）: 指定した敵が移動後に見えていて、射程・射線・遮蔽をクリアしていれば命中 ---
+  // --- 射撃: 速の高い順に1体ずつ解決。撃つ前にベイルアウトしたユニットは撃てない ---
   const teamVis: [Set<string>, Set<string>] = [visibleEnemyIds(state, 0), visibleEnemyIds(state, 1)]
-  const assigned = new Map<string, number>()
   const attackers: Unit[] = []
-  for (const u of alive) {
-    const targetId = orders[u.side].find((x) => x.unitId === u.id)?.target
-    if (!targetId) continue
-    const t = alive.find((e) => e.id === targetId && e.side !== u.side)
+  const queue = alive
+    .map((u) => ({ u, targetId: orders[u.side].find((x) => x.unitId === u.id)?.target, init: classOf(rules, u).spd + rng.next() * rules.combat.initiativeJitter }))
+    .filter((q): q is { u: Unit; targetId: string; init: number } => !!q.targetId)
+    .sort((a, b) => b.init - a.init)
+  for (const { u, targetId } of queue) {
     const cls = classOf(rules, u)
+    const t = state.units.find((e) => e.id === targetId && e.side !== u.side)
     let reason: StrikeBlock | null = null
-    if (!t) reason = 'gone'
+    if (!u.alive) reason = 'down'
+    else if (!t || !t.alive) reason = 'gone'
     else if (dist(origin.get(u.id)!, u.pos) > cls.attackMaxMove) reason = 'moved'
     else if (!(rules.sharedTargeting ? teamVis[u.side].has(t.id) : canSee(map, rules, u.cls, u.pos, t.pos))) reason = 'unseen'
     else reason = strikeCheck(map, rules, u.pos, t.pos, attackRange(map, rules, u.cls, u.pos))
@@ -188,21 +192,40 @@ export function resolveTurn(state: GameState, orders: [Order[], Order[]], _rng: 
       events.push({ type: 'noshot', unitId: u.id, targetId, reason: reason ?? 'gone' })
       continue
     }
-    assigned.set(t.id, (assigned.get(t.id) ?? 0) + cls.damage)
-    events.push({ type: 'attack', unitId: u.id, from: { ...u.pos }, target: { ...t.pos }, hitId: t.id, damage: cls.damage, spotted: !canSee(map, rules, u.cls, u.pos, t.pos) })
+    const tc = classOf(rules, t)
+    const { chance, cover } = hitChance(map, rules, cls, u.pos, t.pos)
+    const shots: ShotResult[] = []
+    for (let i = 0; i < cls.shots && t.hp > 0; i++) {
+      const hit = rng.next() * 100 < chance
+      const dmg = hit ? rollDamage(rules, cls.atk, tc.def, rng) : 0
+      t.hp -= dmg
+      shots.push({ hit, damage: dmg })
+    }
+    const total = shots.reduce((a, x) => a + x.damage, 0)
+    events.push({
+      type: 'attack',
+      unitId: u.id,
+      from: { ...u.pos },
+      target: { ...t.pos },
+      hitId: t.id,
+      chance,
+      cover,
+      shots,
+      damage: total,
+      targetHp: Math.max(0, t.hp),
+      spotted: !canSee(map, rules, u.cls, u.pos, t.pos),
+    })
     attackers.push(u)
-  }
-  for (const [id, dmg] of assigned) state.units.find((u) => u.id === id)!.hp -= dmg
-  if (rules.attackReveals) for (const u of attackers) reveal(state, (1 - u.side) as Side, u, state.turn)
-  for (const u of alive) {
-    if (u.hp <= 0) {
-      u.alive = false
-      const other = (1 - u.side) as Side
+    if (t.hp <= 0) {
+      t.hp = 0
+      t.alive = false
+      const other = (1 - t.side) as Side
       state.kills[other] += 1
-      state.killCost[other] += classOf(rules, u).cost
-      events.push({ type: 'bailout', unitId: u.id, at: { ...u.pos } })
+      state.killCost[other] += tc.cost
+      events.push({ type: 'bailout', unitId: t.id, at: { ...t.pos } })
     }
   }
+  if (rules.attackReveals) for (const u of attackers) reveal(state, (1 - u.side) as Side, u, state.turn)
 
   state.history.push(events)
   updateIntel(state)
