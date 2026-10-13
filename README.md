@@ -8,4 +8,5 @@
 - ルールテスト: `npm test`
 - バランスシミュレーション: `npm run sim`（`sim/results/` に出力）
 - 設計メモ: [docs/DESIGN.md](docs/DESIGN.md)
+- スキル・新ユニット案: [docs/SKILLS.md](docs/SKILLS.md)
 - `main` への push で GitHub Pages に自動デプロイ
