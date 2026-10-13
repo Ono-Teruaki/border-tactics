@@ -1,0 +1,1 @@
+{ "classes": { "sniper": { "closePenalty": 45, "falloff": 8 }, "gunner": { "closePenalty": 15, "falloff": 13 }, "attacker": { "move": 4 } } }

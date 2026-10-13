@@ -3,10 +3,10 @@ import type { RulesConfig } from './types.ts'
 /** ルールとユニット性能はすべてここ。シミュレーションでは差分を上書きして比較する */
 export const DEFAULT_RULES: RulesConfig = {
   classes: {
-    attacker: { id: 'attacker', name: 'アタッカー', kanji: '攻', short: 'A', hp: 28, atk: 14, def: 10, spd: 20, shots: 1, accuracy: 95, falloff: 0, move: 3, range: 1, vision: 3, cost: 2, attackMaxMove: 99 },
-    gunner: { id: 'gunner', name: 'ガンナー', kanji: '銃', short: 'G', hp: 22, atk: 9, def: 8, spd: 14, shots: 3, accuracy: 80, falloff: 10, move: 2, range: 3, vision: 4, cost: 2, attackMaxMove: 99 },
-    sniper: { id: 'sniper', name: 'スナイパー', kanji: '狙', short: 'S', hp: 16, atk: 20, def: 5, spd: 8, shots: 1, accuracy: 90, falloff: 5, move: 2, range: 6, vision: 5, cost: 3, attackMaxMove: 1 },
-    scout: { id: 'scout', name: 'スカウト', kanji: '斥', short: 'R', hp: 16, atk: 6, def: 6, spd: 26, shots: 1, accuracy: 90, falloff: 0, move: 4, range: 1, vision: 6, cost: 1, attackMaxMove: 99 },
+    attacker: { id: 'attacker', name: 'アタッカー', kanji: '攻', short: 'A', hp: 28, atk: 14, def: 10, spd: 20, shots: 1, accuracy: 95, falloff: 0, closePenalty: 0, move: 3, range: 1, vision: 3, cost: 2, attackMaxMove: 99 },
+    gunner: { id: 'gunner', name: 'ガンナー', kanji: '銃', short: 'G', hp: 22, atk: 9, def: 8, spd: 14, shots: 3, accuracy: 80, falloff: 10, closePenalty: 0, move: 2, range: 3, vision: 4, cost: 2, attackMaxMove: 99 },
+    sniper: { id: 'sniper', name: 'スナイパー', kanji: '狙', short: 'S', hp: 16, atk: 20, def: 5, spd: 8, shots: 1, accuracy: 90, falloff: 5, closePenalty: 0, move: 2, range: 6, vision: 5, cost: 3, attackMaxMove: 1 },
+    scout: { id: 'scout', name: 'スカウト', kanji: '斥', short: 'R', hp: 16, atk: 6, def: 6, spd: 26, shots: 1, accuracy: 90, falloff: 0, closePenalty: 0, move: 4, range: 1, vision: 6, cost: 1, attackMaxMove: 99 },
   },
   teamSize: 4,
   turnLimit: 12,

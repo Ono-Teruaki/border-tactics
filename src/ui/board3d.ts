@@ -342,17 +342,24 @@ export class Board3D {
     })
   }
 
-  /** 移動しようとして弾かれる */
-  bouncePiece(id: string, toward: Pos, dur = 600): Promise<void> {
+  /** 移動しようとして弾かれる（干渉マスの手前まで進んで戻る） */
+  bouncePiece(id: string, toward: Pos, dur = 700): Promise<void> {
     const g = this.pieces.get(id)
     if (!g) return Promise.resolve()
     const from = g.position.clone()
-    const mid = from.clone().lerp(this.world(toward), 0.45)
+    const mid = from.clone().lerp(this.world(toward), 0.62)
     return this.tween(dur, (t) => {
-      const k = t < 0.5 ? t * 2 : (1 - t) * 2
+      // 前半で一気に進み、ぶつかって押し戻される
+      const k = t < 0.45 ? 1 - (1 - t / 0.45) ** 2 : 1 - ((t - 0.45) / 0.55) ** 0.7
       g.position.lerpVectors(from, mid, k)
-      g.position.y += Math.sin(Math.PI * k) * 0.2
+      g.position.y += Math.sin(Math.PI * Math.min(1, t / 0.45)) * 0.25 * (t < 0.45 ? 1 : 0)
     })
+  }
+
+  /** 干渉した地点の衝撃 */
+  clash(at: Pos) {
+    this.burst(at, 0xf0a020, 0.35)
+    this.popup(at, '干渉!', '#c07a00', 900)
   }
 
   /** 指定したマス群が収まるようにカメラを寄せる */
@@ -381,9 +388,10 @@ export class Board3D {
     })
   }
 
-  /** 弾ごとに発射して命中/ミスを表示 */
-  async volley(from: Pos, to: Pos, side: 0 | 1, shots: { hit: boolean; damage: number }[], spotted: boolean): Promise<void> {
+  /** 弾ごとに発射して命中/ミスを表示。命中時はヒットストップ・閃光・揺れ */
+  async volley(from: Pos, to: Pos, side: 0 | 1, shots: { hit: boolean; damage: number }[], spotted: boolean, targetId?: string): Promise<void> {
     if (spotted) this.popup(from, '索敵連携', '#1f9d55', 900)
+    const color = side === 0 ? C.me : C.en
     for (let i = 0; i < shots.length; i++) {
       const s = shots[i]
       const a = this.world(from, 0.5)
@@ -393,40 +401,116 @@ export class Board3D {
         const off = new THREE.Vector3(-(b.z - a.z), 0, b.x - a.x).normalize().multiplyScalar((i % 2 ? 1 : -1) * 0.45)
         b.add(off).add(b.clone().sub(a).normalize().multiplyScalar(0.5))
       }
-      this.beam(a, b, side === 0 ? C.me : C.en, 380)
-      this.popup(to, s.hit ? `-${s.damage}` : 'MISS', s.hit ? '#e0443e' : '#8a93a0', 800, (i - (shots.length - 1) / 2) * 0.45)
-      await this.wait(shots.length > 1 ? 220 : 380)
+      await this.tracer(a, b, color, shots.length > 1 ? 110 : 170)
+      const dx = (i - (shots.length - 1) / 2) * 0.45
+      if (s.hit) {
+        this.burst(to, color, 0.45)
+        if (targetId) {
+          this.flash(targetId)
+          this.knockback(targetId, from)
+        }
+        this.popup(to, `-${s.damage}`, '#e0443e', 850, dx, 1.25)
+        // ヒットストップ：一瞬止めて揺らす
+        await this.shake(shots.length > 1 ? 110 : 170, shots.length > 1 ? 0.05 : 0.09)
+      } else {
+        this.popup(to, 'MISS', '#8a93a0', 700, dx)
+        await this.wait(shots.length > 1 ? 90 : 160)
+      }
     }
-    await this.wait(300)
+    await this.wait(260)
   }
 
-  private beam(a: THREE.Vector3, b: THREE.Vector3, color: number, dur: number) {
-    const beam = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, a.distanceTo(b), 8), new THREE.MeshBasicMaterial({ color, transparent: true }))
-    beam.position.copy(a.clone().lerp(b, 0.5))
-    beam.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), b.clone().sub(a).normalize())
-    this.fxGroup.add(beam)
-    this.tween(dur, (t) => {
-      ;(beam.material as THREE.MeshBasicMaterial).opacity = 1 - t
-      beam.scale.x = beam.scale.z = 1 + t * 2
-    }).then(() => void this.fxGroup.remove(beam))
+  /** 弾道：先端が飛んでいき、残光が消える */
+  private tracer(a: THREE.Vector3, b: THREE.Vector3, color: number, flight: number): Promise<void> {
+    const len = a.distanceTo(b)
+    const dir = b.clone().sub(a).normalize()
+    const beam = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.035, 1, 8), new THREE.MeshBasicMaterial({ color, transparent: true }))
+    beam.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir)
+    const head = new THREE.Mesh(new THREE.SphereGeometry(0.08, 12, 8), new THREE.MeshBasicMaterial({ color: 0xffffff }))
+    this.fxGroup.add(beam, head)
+    const fly = this.tween(flight, (t) => {
+      const l = Math.max(0.01, len * t)
+      beam.scale.y = l
+      beam.position.copy(a).addScaledVector(dir, l / 2)
+      head.position.copy(a).addScaledVector(dir, l)
+    })
+    fly.then(() => {
+      this.fxGroup.remove(head)
+      this.tween(320, (t) => {
+        ;(beam.material as THREE.MeshBasicMaterial).opacity = 1 - t
+        beam.scale.x = beam.scale.z = 1 + t * 2
+      }).then(() => void this.fxGroup.remove(beam))
+    })
+    return fly
   }
 
-  shoot(from: Pos, to: Pos, side: 0 | 1, spotted: boolean): Promise<void> {
-    const a = this.world(from, 0.5)
-    const b = this.world(to, 0.45)
-    const beam = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, a.distanceTo(b), 8), new THREE.MeshBasicMaterial({ color: side === 0 ? C.me : C.en, transparent: true }))
-    beam.position.copy(a.clone().lerp(b, 0.5))
-    beam.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), b.clone().sub(a).normalize())
-    this.fxGroup.add(beam)
-    if (spotted) this.popup(from, '索敵連携', '#1f9d55', 700)
-    return this.tween(600, (t) => {
-      ;(beam.material as THREE.MeshBasicMaterial).opacity = 1 - t
-      beam.scale.x = beam.scale.z = 1 + t * 2
-    }).then(() => void this.fxGroup.remove(beam))
+  /** 着弾の衝撃波と火花 */
+  burst(at: Pos, color: number, size: number) {
+    const c = this.world(at, 0.45)
+    const ring = new THREE.Mesh(new THREE.RingGeometry(0.2, 0.28, 32), new THREE.MeshBasicMaterial({ color, transparent: true, side: THREE.DoubleSide, depthWrite: false }))
+    ring.position.copy(c)
+    ring.lookAt(this.camera.position)
+    const sparks: { m: THREE.Mesh; v: THREE.Vector3 }[] = []
+    for (let i = 0; i < 10; i++) {
+      const m = new THREE.Mesh(new THREE.SphereGeometry(0.035, 6, 4), new THREE.MeshBasicMaterial({ color: i % 2 ? 0xffffff : color, transparent: true }))
+      m.position.copy(c)
+      const v = new THREE.Vector3(Math.random() - 0.5, Math.random() * 0.8 + 0.2, Math.random() - 0.5).normalize().multiplyScalar(size * (1.5 + Math.random()))
+      sparks.push({ m, v })
+      this.fxGroup.add(m)
+    }
+    this.fxGroup.add(ring)
+    this.tween(420, (t) => {
+      ring.scale.setScalar(1 + t * size * 6)
+      ;(ring.material as THREE.MeshBasicMaterial).opacity = 1 - t
+      for (const s of sparks) {
+        s.m.position.copy(c).addScaledVector(s.v, t).setY(c.y + s.v.y * t - 0.6 * t * t)
+        ;(s.m.material as THREE.MeshBasicMaterial).opacity = 1 - t
+      }
+    }).then(() => {
+      this.fxGroup.remove(ring)
+      for (const s of sparks) this.fxGroup.remove(s.m)
+    })
   }
 
-  popup(at: Pos, text: string, color: string, dur = 900, dx = 0): Promise<void> {
+  /** 被弾した駒を一瞬光らせる */
+  private flash(id: string) {
+    const g = this.pieces.get(id)
+    if (!g) return
+    const mat = (g.userData.body as THREE.Mesh).material as THREE.MeshStandardMaterial
+    this.tween(260, (t) => {
+      mat.emissive.setRGB(1 - t, (1 - t) * 0.35, (1 - t) * 0.3)
+    }).then(() => mat.emissive.setRGB(0, 0, 0))
+  }
+
+  /** 被弾の反動で少しのけぞる */
+  private knockback(id: string, from: Pos) {
+    const g = this.pieces.get(id)
+    if (!g) return
+    const base = g.position.clone()
+    const dir = base.clone().sub(this.world(from)).setY(0).normalize()
+    const axis = new THREE.Vector3(dir.z, 0, -dir.x)
+    this.tween(260, (t) => {
+      const k = Math.sin(Math.PI * t) * (1 - t)
+      g.position.copy(base).addScaledVector(dir, k * 0.18)
+      g.setRotationFromAxisAngle(axis, k * 0.35)
+    }).then(() => {
+      g.position.copy(base)
+      g.rotation.set(0, 0, 0)
+    })
+  }
+
+  /** カメラを揺らす（ヒットストップ中） */
+  shake(dur: number, amp: number): Promise<void> {
+    return this.tween(dur, (t) => {
+      this.updateCamera()
+      const a = amp * (1 - t)
+      this.camera.position.add(new THREE.Vector3((Math.random() - 0.5) * a, (Math.random() - 0.5) * a, (Math.random() - 0.5) * a))
+    }).then(() => this.updateCamera())
+  }
+
+  popup(at: Pos, text: string, color: string, dur = 900, dx = 0, scale = 1): Promise<void> {
     const sprite = textSprite(text, color)
+    sprite.scale.multiplyScalar(scale)
     const p = this.world(at, 1.3)
     p.x += dx
     sprite.position.copy(p)
@@ -437,8 +521,20 @@ export class Board3D {
     }).then(() => void this.fxGroup.remove(sprite))
   }
 
-  /** ベイルアウト：光の柱 */
-  bailout(at: Pos, side: 0 | 1): Promise<void> {
+  /** 撃破：駒がコロンと倒れてから、光の柱と「撃破」 */
+  async defeat(id: string, at: Pos, side: 0 | 1, from?: Pos): Promise<void> {
+    const g = this.pieces.get(id)
+    if (g) {
+      const dir = from ? this.world(at).sub(this.world(from)).setY(0).normalize() : new THREE.Vector3(1, 0, 0)
+      if (dir.lengthSq() === 0) dir.set(1, 0, 0)
+      const axis = new THREE.Vector3(dir.z, 0, -dir.x)
+      await this.tween(520, (t) => {
+        // 倒れて、床で小さく跳ねる
+        const fall = t < 0.7 ? (t / 0.7) ** 2 : 1 - Math.sin(((t - 0.7) / 0.3) * Math.PI) * 0.08
+        g.setRotationFromAxisAngle(axis, fall * (Math.PI / 2) * 0.92)
+      })
+      await this.shake(140, 0.06)
+    }
     const h = 6
     const pillar = new THREE.Mesh(
       new THREE.CylinderGeometry(0.28, 0.28, h, 24, 1, true),
@@ -447,11 +543,17 @@ export class Board3D {
     const base = this.world(at)
     pillar.position.copy(base).setY(base.y + h / 2)
     this.fxGroup.add(pillar)
-    this.popup(at, 'BAIL OUT', side === 0 ? '#2f6fec' : '#e0443e', 1100)
-    return this.tween(1000, (t) => {
+    this.burst(at, side === 0 ? C.me : C.en, 0.6)
+    this.popup(at, '撃破', side === 0 ? '#2f6fec' : '#e0443e', 1200, 0, 1.3)
+    await this.tween(900, (t) => {
       ;(pillar.material as THREE.MeshBasicMaterial).opacity = 0.6 * (1 - t)
       pillar.scale.x = pillar.scale.z = 1 - t * 0.7
-    }).then(() => void this.fxGroup.remove(pillar))
+      if (g) g.traverse((o) => {
+        const m = (o as THREE.Mesh).material as THREE.Material | undefined
+        if (m && 'opacity' in m) (m as THREE.MeshBasicMaterial).opacity = Math.min((m as THREE.MeshBasicMaterial).opacity, 1 - t)
+      })
+    })
+    this.fxGroup.remove(pillar)
   }
 
   // ---------- カメラ（視点・ズーム・パン） ----------

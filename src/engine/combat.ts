@@ -30,6 +30,7 @@ export function hitChance(map: MapDef, rules: RulesConfig, cls: UnitClass, from:
   const c = rules.combat
   const d = dist(from, target)
   let p = cls.accuracy - cls.falloff * Math.max(0, d - 1)
+  if (d <= 1) p -= cls.closePenalty
   const cover = coverFrom(map, from, target)
   if (cover === 'half') p -= c.coverHalf
   if (cover === 'light') p -= c.coverLight

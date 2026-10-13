@@ -1,0 +1,458 @@
+{
+  "variant": {
+    "classes": {
+      "sniper": {
+        "falloff": 9
+      },
+      "gunner": {
+        "falloff": 15
+      }
+    }
+  },
+  "rules": {
+    "classes": {
+      "attacker": {
+        "id": "attacker",
+        "name": "アタッカー",
+        "kanji": "攻",
+        "short": "A",
+        "hp": 28,
+        "atk": 14,
+        "def": 10,
+        "spd": 20,
+        "shots": 1,
+        "accuracy": 95,
+        "falloff": 0,
+        "closePenalty": 0,
+        "move": 3,
+        "range": 1,
+        "vision": 3,
+        "cost": 2,
+        "attackMaxMove": 99
+      },
+      "gunner": {
+        "id": "gunner",
+        "name": "ガンナー",
+        "kanji": "銃",
+        "short": "G",
+        "hp": 22,
+        "atk": 9,
+        "def": 8,
+        "spd": 14,
+        "shots": 3,
+        "accuracy": 80,
+        "falloff": 15,
+        "closePenalty": 0,
+        "move": 2,
+        "range": 3,
+        "vision": 4,
+        "cost": 2,
+        "attackMaxMove": 99
+      },
+      "sniper": {
+        "id": "sniper",
+        "name": "スナイパー",
+        "kanji": "狙",
+        "short": "S",
+        "hp": 16,
+        "atk": 20,
+        "def": 5,
+        "spd": 8,
+        "shots": 1,
+        "accuracy": 90,
+        "falloff": 9,
+        "closePenalty": 0,
+        "move": 2,
+        "range": 6,
+        "vision": 5,
+        "cost": 3,
+        "attackMaxMove": 1
+      },
+      "scout": {
+        "id": "scout",
+        "name": "スカウト",
+        "kanji": "斥",
+        "short": "R",
+        "hp": 16,
+        "atk": 6,
+        "def": 6,
+        "spd": 26,
+        "shots": 1,
+        "accuracy": 90,
+        "falloff": 0,
+        "closePenalty": 0,
+        "move": 4,
+        "range": 1,
+        "vision": 6,
+        "cost": 1,
+        "attackMaxMove": 99
+      }
+    },
+    "teamSize": 4,
+    "turnLimit": 12,
+    "victory": "killCost",
+    "terrain": {
+      "plain": {
+        "name": "地上",
+        "passable": true,
+        "moveCost": 1,
+        "blocksLos": false,
+        "visionBonus": 0,
+        "rangeBonus": 0,
+        "seesOverBlockers": false
+      },
+      "building": {
+        "name": "ビル",
+        "passable": true,
+        "moveCost": 2,
+        "blocksLos": true,
+        "visionBonus": 2,
+        "rangeBonus": 1,
+        "seesOverBlockers": true
+      }
+    },
+    "sharedTargeting": true,
+    "cover": {
+      "fireOverBuildings": false,
+      "wallHug": true
+    },
+    "combat": {
+      "variance": 0.15,
+      "coverHalf": 25,
+      "coverLight": 12,
+      "highGround": 10,
+      "lowGround": 10,
+      "minHit": 5,
+      "maxHit": 99,
+      "initiativeJitter": 2
+    },
+    "attackReveals": true,
+    "bumpReveals": true
+  },
+  "clearability": {
+    "AGSR/cpu": {
+      "n": 180,
+      "win": {
+        "annihilation": 43,
+        "killCount": 69,
+        "killCost": 73
+      },
+      "draw": {
+        "annihilation": 86,
+        "killCount": 27,
+        "killCost": 15
+      },
+      "turns": 1944
+    },
+    "AGSR/aggressive": {
+      "n": 180,
+      "win": {
+        "annihilation": 63,
+        "killCount": 88,
+        "killCost": 101
+      },
+      "draw": {
+        "annihilation": 78,
+        "killCount": 28,
+        "killCost": 12
+      },
+      "turns": 1928
+    },
+    "AGSR/cautious": {
+      "n": 180,
+      "win": {
+        "annihilation": 28,
+        "killCount": 55,
+        "killCost": 59
+      },
+      "draw": {
+        "annihilation": 96,
+        "killCount": 35,
+        "killCost": 17
+      },
+      "turns": 1987
+    },
+    "AAGS/cpu": {
+      "n": 180,
+      "win": {
+        "annihilation": 61,
+        "killCount": 91,
+        "killCost": 87
+      },
+      "draw": {
+        "annihilation": 87,
+        "killCount": 30,
+        "killCost": 15
+      },
+      "turns": 1948
+    },
+    "AAGS/aggressive": {
+      "n": 180,
+      "win": {
+        "annihilation": 80,
+        "killCount": 113,
+        "killCost": 108
+      },
+      "draw": {
+        "annihilation": 78,
+        "killCount": 21,
+        "killCost": 19
+      },
+      "turns": 1916
+    },
+    "AAGS/cautious": {
+      "n": 180,
+      "win": {
+        "annihilation": 36,
+        "killCount": 77,
+        "killCost": 74
+      },
+      "draw": {
+        "annihilation": 119,
+        "killCount": 31,
+        "killCost": 16
+      },
+      "turns": 2043
+    },
+    "GGSR/cpu": {
+      "n": 180,
+      "win": {
+        "annihilation": 51,
+        "killCount": 73,
+        "killCost": 76
+      },
+      "draw": {
+        "annihilation": 68,
+        "killCount": 26,
+        "killCost": 12
+      },
+      "turns": 1868
+    },
+    "GGSR/aggressive": {
+      "n": 180,
+      "win": {
+        "annihilation": 74,
+        "killCount": 91,
+        "killCost": 95
+      },
+      "draw": {
+        "annihilation": 50,
+        "killCount": 20,
+        "killCost": 15
+      },
+      "turns": 1860
+    },
+    "GGSR/cautious": {
+      "n": 180,
+      "win": {
+        "annihilation": 28,
+        "killCount": 65,
+        "killCost": 72
+      },
+      "draw": {
+        "annihilation": 87,
+        "killCount": 26,
+        "killCost": 12
+      },
+      "turns": 1956
+    },
+    "AAGR/cpu": {
+      "n": 180,
+      "win": {
+        "annihilation": 41,
+        "killCount": 76,
+        "killCost": 87
+      },
+      "draw": {
+        "annihilation": 96,
+        "killCount": 21,
+        "killCost": 11
+      },
+      "turns": 2006
+    },
+    "AAGR/aggressive": {
+      "n": 180,
+      "win": {
+        "annihilation": 25,
+        "killCount": 64,
+        "killCost": 81
+      },
+      "draw": {
+        "annihilation": 107,
+        "killCount": 26,
+        "killCost": 21
+      },
+      "turns": 2013
+    },
+    "AAGR/cautious": {
+      "n": 180,
+      "win": {
+        "annihilation": 16,
+        "killCount": 46,
+        "killCost": 60
+      },
+      "draw": {
+        "annihilation": 112,
+        "killCount": 27,
+        "killCost": 10
+      },
+      "turns": 2032
+    },
+    "SSRR/cpu": {
+      "n": 180,
+      "win": {
+        "annihilation": 18,
+        "killCount": 46,
+        "killCost": 55
+      },
+      "draw": {
+        "annihilation": 73,
+        "killCount": 19,
+        "killCost": 6
+      },
+      "turns": 1829
+    },
+    "SSRR/aggressive": {
+      "n": 180,
+      "win": {
+        "annihilation": 33,
+        "killCount": 60,
+        "killCost": 75
+      },
+      "draw": {
+        "annihilation": 77,
+        "killCount": 29,
+        "killCost": 13
+      },
+      "turns": 1860
+    },
+    "SSRR/cautious": {
+      "n": 180,
+      "win": {
+        "annihilation": 21,
+        "killCount": 50,
+        "killCost": 55
+      },
+      "draw": {
+        "annihilation": 89,
+        "killCount": 22,
+        "killCost": 17
+      },
+      "turns": 1885
+    },
+    "AAAA/cpu": {
+      "n": 180,
+      "win": {
+        "annihilation": 36,
+        "killCount": 101,
+        "killCost": 113
+      },
+      "draw": {
+        "annihilation": 127,
+        "killCount": 22,
+        "killCost": 9
+      },
+      "turns": 2079
+    },
+    "AAAA/aggressive": {
+      "n": 180,
+      "win": {
+        "annihilation": 22,
+        "killCount": 107,
+        "killCost": 120
+      },
+      "draw": {
+        "annihilation": 145,
+        "killCount": 27,
+        "killCost": 10
+      },
+      "turns": 2091
+    },
+    "AAAA/cautious": {
+      "n": 180,
+      "win": {
+        "annihilation": 17,
+        "killCount": 66,
+        "killCost": 78
+      },
+      "draw": {
+        "annihilation": 143,
+        "killCount": 33,
+        "killCost": 18
+      },
+      "turns": 2113
+    }
+  },
+  "overall": {
+    "agg": {
+      "n": 360,
+      "win": {
+        "annihilation": 81,
+        "killCount": 136,
+        "killCost": 140
+      },
+      "draw": {
+        "annihilation": 160,
+        "killCount": 44,
+        "killCost": 26
+      },
+      "turns": 3811
+    },
+    "annihil": 200,
+    "classK": {
+      "attacker": 413,
+      "gunner": 563,
+      "sniper": 646,
+      "scout": 43
+    },
+    "classD": {
+      "attacker": 395,
+      "scout": 528,
+      "sniper": 351,
+      "gunner": 391
+    },
+    "classN": {
+      "attacker": 726,
+      "scout": 744,
+      "gunner": 702,
+      "sniper": 708
+    }
+  },
+  "matrix": {
+    "AAGG": 0.7107843137254902,
+    "AAAA": 0.6862745098039216,
+    "GGGG": 0.6813725490196079,
+    "AAAG": 0.6544117647058824,
+    "AGGS": 0.6446078431372549,
+    "AGGG": 0.6348039215686274,
+    "GGGS": 0.6225490196078431,
+    "GGSS": 0.6078431372549019,
+    "SSSR": 0.5931372549019608,
+    "AGGR": 0.5833333333333334,
+    "AGSR": 0.5833333333333334,
+    "GSSR": 0.5833333333333334,
+    "AGSS": 0.571078431372549,
+    "SSSS": 0.5686274509803921,
+    "ASSS": 0.5612745098039216,
+    "GGSR": 0.5612745098039216,
+    "AAAS": 0.5588235294117647,
+    "GSSS": 0.5514705882352942,
+    "AAGS": 0.5490196078431373,
+    "GGGR": 0.5367647058823529,
+    "AAAR": 0.5343137254901961,
+    "AAGR": 0.5318627450980392,
+    "AASS": 0.5245098039215687,
+    "AASR": 0.49754901960784315,
+    "ASSR": 0.47794117647058826,
+    "AARR": 0.4338235294117647,
+    "AGRR": 0.4215686274509804,
+    "ASRR": 0.40931372549019607,
+    "SSRR": 0.40441176470588236,
+    "GGRR": 0.3897058823529412,
+    "GSRR": 0.37254901960784315,
+    "SRRR": 0.22549019607843138,
+    "ARRR": 0.19362745098039216,
+    "GRRR": 0.18872549019607843,
+    "RRRR": 0.004901960784313725
+  }
+}

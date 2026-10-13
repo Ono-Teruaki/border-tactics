@@ -25,6 +25,8 @@ export interface UnitClass {
   accuracy: number
   /** 距離1マスごとの命中率低下（%） */
   falloff: number
+  /** 隣接（距離1）の敵を撃つときの命中率低下（%）。懐に入られると弱い */
+  closePenalty: number
   move: number
   range: number
   vision: number

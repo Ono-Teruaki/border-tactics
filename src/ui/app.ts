@@ -413,30 +413,36 @@ class Battle {
       disp.set(id, { id, side: 1, cls: u.cls, letter: c.short, hp: cur?.hp ?? null, maxHp: c.hp, pos: cur?.pos ?? pos, ghost: false })
     }
 
-    // ① 移動：味方 → 見えた敵 の順に1体ずつ
-    const moves = events.filter((e) => e.type === 'move' || e.type === 'bounce')
-    const ordered = [...moves.filter((e) => isMine(e.unitId)), ...moves.filter((e) => !isMine(e.unitId) && enemySeen(e.unitId))]
-    for (const e of ordered) {
-      if (e.type === 'move') {
-        if (!isMine(e.unitId)) {
-          reveal(e.unitId, e.from)
-          show()
-        }
-        const from = disp.get(e.unitId)!.pos
-        this.caption(`${this.name(e.unitId)} 移動`)
-        await this.board.focus([from, e.to], 380)
-        await this.board.movePiece(e.unitId, e.to)
-        disp.get(e.unitId)!.pos = e.to
-      } else if (e.type === 'bounce') {
-        const tried = (isMine(e.unitId) ? myOrders : cpuOrders).find((o) => o.unitId === e.unitId)!.dest
-        if (!isMine(e.unitId)) {
-          reveal(e.unitId, e.at)
-          show()
-        }
-        this.caption(`${this.name(e.unitId)} 移動を阻まれた${e.contact ? '（敵と接触！）' : ''}`)
-        await this.board.focus([e.at, tried], 380)
-        await this.board.bouncePiece(e.unitId, tried)
+    // ① 移動：味方 → 見えた敵 の順に1体ずつ。干渉（弾かれ）は最後にまとめて同時に見せる
+    const moves = events.filter((e): e is Extract<GameEvent, { type: 'move' }> => e.type === 'move')
+    const shownMoves = [...moves.filter((e) => isMine(e.unitId)), ...moves.filter((e) => !isMine(e.unitId) && enemySeen(e.unitId))]
+    for (const e of shownMoves) {
+      if (!isMine(e.unitId)) {
+        reveal(e.unitId, e.from)
+        show()
       }
+      const from = disp.get(e.unitId)!.pos
+      this.caption(`${this.name(e.unitId)} 移動`)
+      await this.board.focus([from, e.to], 380)
+      await this.board.movePiece(e.unitId, e.to)
+      disp.get(e.unitId)!.pos = e.to
+    }
+    const bounces = events.filter(
+      (e): e is Extract<GameEvent, { type: 'bounce' }> => e.type === 'bounce' && (isMine(e.unitId) || e.contact || enemySeen(e.unitId)),
+    )
+    if (bounces.length) {
+      const tried = (e: { unitId: string }) => (isMine(e.unitId) ? myOrders : cpuOrders).find((o) => o.unitId === e.unitId)!.dest
+      for (const e of bounces) if (!isMine(e.unitId)) reveal(e.unitId, e.at)
+      show()
+      this.caption(`干渉：${bounces.map((e) => this.name(e.unitId)).join('・')} が同じマスに入ろうとして弾かれた`)
+      await this.board.focus(bounces.flatMap((e) => [e.at, tried(e)]), 420)
+      const spots = new Map(bounces.map((e) => [`${tried(e).x},${tried(e).y}`, tried(e)]))
+      const go = Promise.all(bounces.map((e) => this.board.bouncePiece(e.unitId, tried(e))))
+      await this.board.wait(300)
+      for (const p of spots.values()) this.board.clash(p)
+      await this.board.shake(160, 0.06)
+      await go
+      await this.board.wait(250)
     }
 
     // ② 交戦：速の高い順（イベント順）
@@ -454,7 +460,7 @@ class Battle {
           `${this.name(e.unitId)}（速${a.spd}）→ ${this.name(e.hitId)}　命中率${e.chance}%${e.cover !== 'none' ? `（遮蔽:${e.cover === 'half' ? '半' : '小'}）` : ''}${e.shots.length > 1 ? `　${hits}/${e.shots.length}発` : ''}`,
         )
         await this.board.focus([e.from, e.target], 420)
-        await this.board.volley(e.from, e.target, isMine(e.unitId) ? 0 : 1, e.shots, e.spotted && isMine(e.unitId))
+        await this.board.volley(e.from, e.target, isMine(e.unitId) ? 0 : 1, e.shots, e.spotted && isMine(e.unitId), e.hitId)
         const t = disp.get(e.hitId)
         if (t) t.hp = e.targetHp
         show()
@@ -464,8 +470,9 @@ class Battle {
         await this.board.focus([disp.get(e.unitId)?.pos ?? u.pos], 350)
         await this.board.popup(disp.get(e.unitId)?.pos ?? u.pos, `× ${BLOCK_LABEL[e.reason]}`, '#c07a00', 800)
       } else if (e.type === 'bailout') {
-        this.caption(`💥 ${this.name(e.unitId)} ベイルアウト`)
-        await this.board.bailout(e.at, isMine(e.unitId) ? 0 : 1)
+        this.caption(`💥 ${this.name(e.unitId)} 撃破`)
+        const killer = [...events].reverse().find((x) => x.type === 'attack' && x.hitId === e.unitId)
+        await this.board.defeat(e.unitId, e.at, isMine(e.unitId) ? 0 : 1, killer?.type === 'attack' ? killer.from : undefined)
         disp.delete(e.unitId)
         show()
       }
@@ -517,7 +524,7 @@ class Battle {
         const hits = e.shots.filter((x) => x.hit).length
         lines.push(`${this.name(e.unitId)} → ${this.name(e.hitId)}: ${hits}/${e.shots.length}発命中 -${e.damage}（命中率${e.chance}%）${e.spotted && u.side === 0 ? '［索敵連携］' : ''}`)
       }
-      if (e.type === 'bailout') lines.push(`💥 ${this.name(e.unitId)} ベイルアウト`)
+      if (e.type === 'bailout') lines.push(`💥 ${this.name(e.unitId)} 撃破`)
     }
     if (!lines.length) lines.push('交戦なし')
     for (const l of lines.reverse()) this.log(`${turn}手目 ${l}`)
