@@ -18,6 +18,10 @@ export interface AiParams {
   scouting: number
   /** 屋上の好み */
   roofPref: number
+  /** 近接ユニットが射手に詰め寄る意欲（相手の closePenalty が大きいほど強まる） */
+  rush: number
+  /** 射手が近接に寄られる位置を避ける意欲（自分の closePenalty が大きいほど強まる） */
+  evade: number
   /** 何ターン前までの目撃情報を使うか */
   memory: number
   /** 同点崩し・揺らぎ */
@@ -26,10 +30,10 @@ export interface AiParams {
 }
 
 export const AI_PRESETS: Record<string, AiParams> = {
-  cpu: { name: 'cpu', aggression: 1, caution: 1, scouting: 0.6, roofPref: 0.6, memory: 4, noise: 0.3 },
-  aggressive: { name: 'aggressive', aggression: 1.6, caution: 0.5, scouting: 0.4, roofPref: 0.4, memory: 4, noise: 0.3 },
-  cautious: { name: 'cautious', aggression: 0.7, caution: 1.8, scouting: 0.8, roofPref: 1, memory: 4, noise: 0.3 },
-  random: { name: 'random', aggression: 0, caution: 0, scouting: 0, roofPref: 0, memory: 0, noise: 1, random: true },
+  cpu: { name: 'cpu', aggression: 1, caution: 1, scouting: 0.6, roofPref: 0.6, rush: 0, evade: 0, memory: 4, noise: 0.3 },
+  aggressive: { name: 'aggressive', aggression: 1.6, caution: 0.5, scouting: 0.4, roofPref: 0.4, rush: 0, evade: 0, memory: 4, noise: 0.3 },
+  cautious: { name: 'cautious', aggression: 0.7, caution: 1.8, scouting: 0.8, roofPref: 1, rush: 0, evade: 0, memory: 4, noise: 0.3 },
+  random: { name: 'random', aggression: 0, caution: 0, scouting: 0, roofPref: 0, rush: 0, evade: 0, memory: 0, noise: 1, random: true },
 }
 
 /** CPU が使う編成候補 */
@@ -114,6 +118,21 @@ function bestOrder(obs: Observation, u: Unit, known: Known[], reserved: Set<stri
     for (const e of known) if (canSee(map, rules, u.cls, pos, e.pos)) scout += e.age === 0 ? 0.5 : 1
     if (isScout) scout *= 1.5
 
+    // 詰め寄り：近接ユニットは射手の懐（隣接）を目指す。射手は近接に寄られる位置を嫌う
+    let rush = 0
+    let evade = 0
+    for (const e of known) {
+      if (e.age > 1) continue
+      const ec = classOf(rules, e)
+      const d = dist(pos, e.pos)
+      if (cls.range <= 1 && ec.range > 1) {
+        const w = 1 + ec.closePenalty / 30
+        rush += d <= 1 ? w : d <= 2 ? w * 0.4 : 0
+      } else if (cls.range > 1 && ec.range <= 1 && cls.closePenalty > 0) {
+        if (d <= ec.move + 1) evade -= (cls.closePenalty / 30) * (e.age === 0 ? 1 : 0.5)
+      }
+    }
+
     // 距離取り
     let nearest = Infinity
     for (const e of known) nearest = Math.min(nearest, dist(pos, e.pos) + e.age * 0.5)
@@ -121,7 +140,7 @@ function bestOrder(obs: Observation, u: Unit, known: Known[], reserved: Set<stri
 
     const roof = t.visionBonus > 0 && (cls.range > 1 || isScout) ? 1 + visionRange(map, rules, u.cls, pos) * 0.05 : 0
     const score =
-      p.aggression * (fire * 1.5 + progress) - p.caution * threat * 0.6 + p.scouting * scout + p.roofPref * roof + rng.next() * p.noise
+      p.aggression * (fire * 1.5 + progress) - p.caution * threat * 0.6 + p.scouting * scout + p.roofPref * roof + p.rush * rush + p.evade * evade + rng.next() * p.noise
     if (!best || score > best.score) best = { score, pos, target }
   }
   const dest = best?.pos ?? { ...u.pos }

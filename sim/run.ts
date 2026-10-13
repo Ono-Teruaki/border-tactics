@@ -4,7 +4,7 @@
 //   npm run sim -- --games 100 --quick  … 軽量版（編成総当たりを省略）
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { basename } from 'node:path'
-import { CPU_COMPS } from '../src/engine/ai.ts'
+import { AI_PRESETS, CPU_COMPS, type AiParams } from '../src/engine/ai.ts'
 import { MAPS } from '../src/engine/maps.ts'
 import { DEFAULT_RULES, mergeRules, type RulesOverride } from '../src/engine/rules.ts'
 import type { MapDef, RulesConfig, Side, VictoryMode } from '../src/engine/types.ts'
@@ -18,8 +18,10 @@ const arg = (name: string, def?: string) => {
 const flag = (name: string) => args.includes(`--${name}`)
 
 const variantPath = arg('variant')
-const variant: RulesOverride & { maps?: string[] } = variantPath ? JSON.parse(readFileSync(variantPath, 'utf8')) : {}
-const { maps: mapIds, ...override } = variant
+const variant: RulesOverride & { maps?: string[]; ai?: Record<string, Partial<AiParams>> } = variantPath ? JSON.parse(readFileSync(variantPath, 'utf8')) : {}
+const { maps: mapIds, ai: aiOverride, ...override } = variant
+// AI の重みも variant で上書きできる（例: { "ai": { "cpu": { "rush": 1.5 } } }）
+for (const [k, v] of Object.entries(aiOverride ?? {})) Object.assign(AI_PRESETS[k], v)
 const rules = mergeRules(DEFAULT_RULES, override)
 const maps: MapDef[] = mapIds ? MAPS.filter((m) => mapIds.includes(m.id)) : MAPS
 const GAMES = Number(arg('games', '200'))

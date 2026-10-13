@@ -459,8 +459,16 @@ class Battle {
         this.caption(
           `${this.name(e.unitId)}（速${a.spd}）→ ${this.name(e.hitId)}　命中率${e.chance}%${e.cover !== 'none' ? `（遮蔽:${e.cover === 'half' ? '半' : '小'}）` : ''}${e.shots.length > 1 ? `　${hits}/${e.shots.length}発` : ''}`,
         )
-        await this.board.focus([e.from, e.target], 420)
-        await this.board.volley(e.from, e.target, isMine(e.unitId) ? 0 : 1, e.shots, e.spotted && isMine(e.unitId), e.hitId)
+        const side = isMine(e.unitId) ? 0 : 1
+        const lethal = e.targetHp <= 0
+        if (Math.abs(e.from.x - e.target.x) + Math.abs(e.from.y - e.target.y) <= 1) {
+          await this.board.meleeStrike(e.unitId, e.from, e.target, side, e.shots, e.hitId, lethal)
+        } else if (lethal) {
+          await this.board.killShot(e.from, e.target, side, e.shots, e.spotted && isMine(e.unitId), e.hitId)
+        } else {
+          await this.board.focus([e.from, e.target], 420)
+          await this.board.volley(e.from, e.target, side, e.shots, e.spotted && isMine(e.unitId), e.hitId)
+        }
         const t = disp.get(e.hitId)
         if (t) t.hp = e.targetHp
         show()

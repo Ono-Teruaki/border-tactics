@@ -1,0 +1,1 @@
+{ "classes": { "attacker": { "pursuit": true }, "scout": { "pursuit": true }, "sniper": { "closePenalty": 45 }, "gunner": { "closePenalty": 20 } } }

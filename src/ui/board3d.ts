@@ -93,6 +93,8 @@ export class Board3D {
   private resizeObs: ResizeObserver
   /** 演出の再生速度（スキップ時は大きくする） */
   speed = 1
+  /** スローモーション係数（<1 で遅くなる） */
+  private timeScale = 1
 
   constructor(container: HTMLElement, map: MapDef) {
     this.container = container
@@ -363,13 +365,13 @@ export class Board3D {
   }
 
   /** 指定したマス群が収まるようにカメラを寄せる */
-  focus(points: Pos[], dur = 450): Promise<void> {
+  focus(points: Pos[], dur = 450, maxZoom = 2.6): Promise<void> {
     const xs = points.map((p) => p.x - this.half)
     const zs = points.map((p) => p.y - this.half)
     const cx = (Math.min(...xs) + Math.max(...xs)) / 2
     const cz = (Math.min(...zs) + Math.max(...zs)) / 2
     const span = Math.max(Math.max(...xs) - Math.min(...xs), Math.max(...zs) - Math.min(...zs)) + 3
-    const z = Math.min(2.6, Math.max(1, this.map.width / span))
+    const z = Math.min(maxZoom, Math.max(1, this.map.width / span))
     return this.cameraTo(new THREE.Vector3(cx, 0, cz), z, dur)
   }
 
@@ -521,17 +523,29 @@ export class Board3D {
     }).then(() => void this.fxGroup.remove(sprite))
   }
 
-  /** 撃破：駒がコロンと倒れてから、光の柱と「撃破」 */
+  /** 撃破：少しスローで吹っ飛ばされて倒れ、光の柱と「撃破」 */
   async defeat(id: string, at: Pos, side: 0 | 1, from?: Pos): Promise<void> {
     const g = this.pieces.get(id)
     if (g) {
-      const dir = from ? this.world(at).sub(this.world(from)).setY(0).normalize() : new THREE.Vector3(1, 0, 0)
-      if (dir.lengthSq() === 0) dir.set(1, 0, 0)
+      this.timeScale = 0.45
+      const start = g.position.clone()
+      let dir = from ? this.world(at).sub(this.world(from)).setY(0) : new THREE.Vector3(1, 0, 0)
+      if (dir.lengthSq() === 0) dir = new THREE.Vector3(1, 0, 0)
+      dir.normalize()
       const axis = new THREE.Vector3(dir.z, 0, -dir.x)
-      await this.tween(520, (t) => {
-        // 倒れて、床で小さく跳ねる
-        const fall = t < 0.7 ? (t / 0.7) ** 2 : 1 - Math.sin(((t - 0.7) / 0.3) * Math.PI) * 0.08
-        g.setRotationFromAxisAngle(axis, fall * (Math.PI / 2) * 0.92)
+      const land = start.clone().addScaledVector(dir, 0.55)
+      // 吹っ飛び：放物線で飛びながら回転して倒れる
+      await this.tween(420, (t) => {
+        g.position.lerpVectors(start, land, t)
+        g.position.y = start.y + Math.sin(Math.PI * t) * 0.45
+        g.setRotationFromAxisAngle(axis, (Math.PI / 2) * 0.92 * Math.min(1, t * 1.15) + Math.sin(Math.PI * t) * 0.35)
+      })
+      this.timeScale = 1
+      this.burst({ x: at.x, y: at.y }, 0xffffff, 0.25)
+      // 着地して小さく跳ねる
+      await this.tween(260, (t) => {
+        g.position.y = start.y + Math.sin(Math.PI * t) * 0.08
+        g.setRotationFromAxisAngle(axis, (Math.PI / 2) * (0.92 + Math.sin(Math.PI * t) * -0.06))
       })
       await this.shake(140, 0.06)
     }
@@ -540,7 +554,7 @@ export class Board3D {
       new THREE.CylinderGeometry(0.28, 0.28, h, 24, 1, true),
       new THREE.MeshBasicMaterial({ color: side === 0 ? C.me : C.en, transparent: true, side: THREE.DoubleSide, depthWrite: false }),
     )
-    const base = this.world(at)
+    const base = g ? g.position.clone().setY(this.world(at).y) : this.world(at)
     pillar.position.copy(base).setY(base.y + h / 2)
     this.fxGroup.add(pillar)
     this.burst(at, side === 0 ? C.me : C.en, 0.6)
@@ -548,12 +562,118 @@ export class Board3D {
     await this.tween(900, (t) => {
       ;(pillar.material as THREE.MeshBasicMaterial).opacity = 0.6 * (1 - t)
       pillar.scale.x = pillar.scale.z = 1 - t * 0.7
-      if (g) g.traverse((o) => {
-        const m = (o as THREE.Mesh).material as THREE.Material | undefined
-        if (m && 'opacity' in m) (m as THREE.MeshBasicMaterial).opacity = Math.min((m as THREE.MeshBasicMaterial).opacity, 1 - t)
-      })
+      if (g)
+        g.traverse((o) => {
+          const m = (o as THREE.Mesh).material as THREE.Material | undefined
+          if (m && 'opacity' in m) (m as THREE.MeshBasicMaterial).opacity = Math.min((m as THREE.MeshBasicMaterial).opacity, 1 - t)
+        })
     })
     this.fxGroup.remove(pillar)
+  }
+
+  /** 近接攻撃：踏み込んで斬撃 */
+  async meleeStrike(attackerId: string, from: Pos, to: Pos, side: 0 | 1, shots: { hit: boolean; damage: number }[], targetId: string, lethal: boolean): Promise<void> {
+    const g = this.pieces.get(attackerId)
+    const color = side === 0 ? C.me : C.en
+    await this.focus([from, to], 380, 3.2)
+    for (let i = 0; i < shots.length; i++) {
+      const s = shots[i]
+      const isKill = lethal && i === shots.length - 1
+      const home = g?.position.clone() ?? this.world(from)
+      const lunge = home.clone().lerp(this.world(to), 0.58)
+      // 溜め → 踏み込み
+      if (g) {
+        await this.tween(160, (t) => {
+          g.position.copy(home).addScaledVector(lunge.clone().sub(home), -0.12 * Math.sin((Math.PI * t) / 2))
+        })
+        await this.tween(90, (t) => {
+          g.position.lerpVectors(home, lunge, t * t)
+          g.position.y = home.y + Math.sin(Math.PI * t) * 0.12
+        })
+      }
+      if (isKill) this.timeScale = 0.45
+      this.slash(from, to, color, s.hit)
+      if (s.hit) {
+        this.burst(to, color, isKill ? 0.7 : 0.45)
+        this.flash(targetId)
+        if (!isKill) this.knockback(targetId, from)
+        this.popup(to, `-${s.damage}`, '#e0443e', 850, 0, isKill ? 1.6 : 1.25)
+        await this.shake(isKill ? 260 : 170, isKill ? 0.12 : 0.09)
+      } else {
+        this.popup(to, 'MISS', '#8a93a0', 700)
+        await this.wait(160)
+      }
+      this.timeScale = 1
+      // 戻る
+      if (g) {
+        await this.tween(200, (t) => {
+          g.position.lerpVectors(lunge, home, 1 - (1 - t) ** 2)
+        })
+      }
+    }
+    await this.wait(200)
+  }
+
+  /** 斬撃の弧 */
+  private slash(from: Pos, to: Pos, color: number, hit: boolean) {
+    const c = this.world(to, 0.5)
+    const arc = new THREE.Mesh(
+      new THREE.TorusGeometry(0.42, 0.045, 6, 32, Math.PI * 0.85),
+      new THREE.MeshBasicMaterial({ color: hit ? 0xffffff : 0xb8c0cc, transparent: true, depthTest: false }),
+    )
+    const glow = new THREE.Mesh(
+      new THREE.TorusGeometry(0.42, 0.11, 6, 32, Math.PI * 0.85),
+      new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.5, depthTest: false }),
+    )
+    const grp = new THREE.Group()
+    grp.add(glow, arc)
+    grp.position.copy(c)
+    grp.lookAt(this.camera.position)
+    const dir = this.world(to).sub(this.world(from))
+    grp.rotateZ(Math.atan2(dir.z, dir.x) + (hit ? -0.6 : 0.4))
+    grp.renderOrder = 6
+    this.fxGroup.add(grp)
+    this.tween(300, (t) => {
+      grp.rotateZ(0.12)
+      grp.scale.setScalar(0.7 + t * 0.6)
+      ;(arc.material as THREE.MeshBasicMaterial).opacity = 1 - t
+      ;(glow.material as THREE.MeshBasicMaterial).opacity = 0.5 * (1 - t)
+    }).then(() => void this.fxGroup.remove(grp))
+  }
+
+  /**
+   * 遠距離でのとどめ：撃ち手に寄って発射 → 弾を追う → 着弾の瞬間をスローで。
+   * それまでの弾は通常どおり。
+   */
+  async killShot(from: Pos, to: Pos, side: 0 | 1, shots: { hit: boolean; damage: number }[], spotted: boolean, targetId: string): Promise<void> {
+    const color = side === 0 ? C.me : C.en
+    const lastHit = shots.map((x) => x.hit).lastIndexOf(true)
+    const before = shots.slice(0, lastHit)
+    if (before.length) {
+      await this.focus([from, to], 380)
+      await this.volley(from, to, side, before, spotted, targetId)
+    } else if (spotted) this.popup(from, '索敵連携', '#1f9d55', 900)
+    // 撃ち手のアップ
+    await this.focus([from], 380, 3.4)
+    this.burst(from, 0xffffff, 0.2)
+    await this.wait(120)
+    // 弾を追う（スロー）
+    this.timeScale = 0.5
+    const a = this.world(from, 0.5)
+    const b = this.world(to, 0.45)
+    const flight = 260 + a.distanceTo(b) * 60
+    const cam = this.focus([to], flight, 3.4)
+    await this.tracer(a, b, color, flight)
+    await cam
+    // 着弾
+    const s = shots[lastHit]
+    this.burst(to, color, 0.75)
+    this.flash(targetId)
+    this.popup(to, `-${s.damage}`, '#e0443e', 1000, 0, 1.7)
+    await this.shake(260, 0.12)
+    this.timeScale = 1
+    for (const rest of shots.slice(lastHit + 1)) this.popup(to, rest.hit ? `-${rest.damage}` : 'MISS', '#8a93a0', 600)
+    await this.wait(150)
   }
 
   // ---------- カメラ（視点・ズーム・パン） ----------
@@ -698,7 +818,7 @@ export class Board3D {
 
   private tween(dur: number, update: (t: number) => void): Promise<void> {
     return new Promise((resolve) => {
-      this.tweens.push({ start: performance.now(), dur: Math.max(1, dur / this.speed), update, resolve })
+      this.tweens.push({ start: performance.now(), dur: Math.max(1, dur / (this.speed * this.timeScale)), update, resolve })
       this.loop()
     })
   }

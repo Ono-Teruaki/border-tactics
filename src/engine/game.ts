@@ -137,6 +137,19 @@ export function resolveTurn(state: GameState, orders: [Order[], Order[]], rng: R
     proposed.set(u.id, o && isValidDest(state, u, o.dest) ? { ...o.dest } : { ...u.pos })
   }
 
+  // --- 追撃: pursuit を持つユニットは、狙った敵の移動先の隣へ（届く範囲で）行き先を変える ---
+  for (const u of alive) {
+    if (!classOf(rules, u).pursuit) continue
+    const targetId = orders[u.side].find((x) => x.unitId === u.id)?.target
+    const t = alive.find((e) => e.id === targetId && e.side !== u.side)
+    if (!t) continue
+    const tp = proposed.get(t.id)!
+    const want = proposed.get(u.id)!
+    const cands = [...reachableFor(map, rules, u).values()].filter((r) => !samePos(r.pos, tp))
+    cands.sort((a, b) => dist(a.pos, tp) - dist(b.pos, tp) || dist(a.pos, want) - dist(b.pos, want) || a.cost - b.cost)
+    if (cands.length && dist(cands[0].pos, tp) < dist(want, tp)) proposed.set(u.id, { ...cands[0].pos })
+  }
+
   // --- 移動（衝突解決） ---
   const bounced = new Set<string>()
   const contact = new Set<string>()

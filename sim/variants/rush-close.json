@@ -1,0 +1,1 @@
+{ "classes": { "sniper": { "closePenalty": 45 }, "gunner": { "closePenalty": 20 } }, "ai": { "cpu": { "rush": 1.2 }, "aggressive": { "rush": 1.2 }, "cautious": { "rush": 1.2 } } }

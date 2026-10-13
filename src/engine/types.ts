@@ -27,6 +27,8 @@ export interface UnitClass {
   falloff: number
   /** 隣接（距離1）の敵を撃つときの命中率低下（%）。懐に入られると弱い */
   closePenalty: number
+  /** 追撃: 狙った敵の移動先に合わせて、移動力の範囲で隣接マスへ詰める */
+  pursuit: boolean
   move: number
   range: number
   vision: number
