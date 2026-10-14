@@ -5,7 +5,7 @@
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { basename } from 'node:path'
 import { AI_PRESETS, CPU_COMPS, type AiParams } from '../src/engine/ai.ts'
-import { MAPS } from '../src/engine/maps.ts'
+import { CURRENT_MAP_IDS, MAPS } from '../src/engine/maps.ts'
 import { DEFAULT_RULES, mergeRules, type RulesOverride } from '../src/engine/rules.ts'
 import type { MapDef, RulesConfig, Side, VictoryMode } from '../src/engine/types.ts'
 import { allComps, compLabel, playMatch, resolveAi, type MatchStats } from './lib.ts'
@@ -23,7 +23,7 @@ const { maps: mapIds, ai: aiOverride, ...override } = variant
 // AI の重みも variant で上書きできる（例: { "ai": { "cpu": { "rush": 1.5 } } }）
 for (const [k, v] of Object.entries(aiOverride ?? {})) Object.assign(AI_PRESETS[k], v)
 const rules = mergeRules(DEFAULT_RULES, override)
-const maps: MapDef[] = mapIds ? MAPS.filter((m) => mapIds.includes(m.id)) : MAPS
+const maps: MapDef[] = mapIds ? MAPS.filter((m) => mapIds.includes(m.id)) : MAPS.filter((m) => CURRENT_MAP_IDS.includes(m.id))
 const GAMES = Number(arg('games', '200'))
 const SEED = Number(arg('seed', '1'))
 const name = arg('out', variantPath ? basename(variantPath, '.json') : 'default')!

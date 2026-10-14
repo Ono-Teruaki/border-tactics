@@ -23,15 +23,71 @@ function defineMap(id: string, name: string, size: number, buildings: [number, n
   return { id, name, width: size, height: size, tiles: grid.map((r) => r.join('')), spawns }
 }
 
+/**
+ * ASCII で全体を書く版（点対称は自分で守る。テストで検査している）。
+ * 設計の目安（`node sim/sightlines.ts` で測る）:
+ * - 地上の長い直線を切る。スナイパーが地上から撃てるマスは平均で盤面の3割前後まで
+ * - 強い屋上（広く撃てる）は中央寄り。自陣のそばの屋上は地上並みに視野を絞る
+ */
+function asciiMap(id: string, name: string, rows: string[]): MapDef {
+  const size = rows.length
+  const tiles = rows.map((r) => r.replace(/\s/g, ''))
+  const buildings: [number, number][] = []
+  tiles.forEach((r, y) => [...r].forEach((ch, x) => ch === '#' && buildings.push([x, y])))
+  const m = defineMap(id, name, size, buildings)
+  if (m.tiles.join() !== tiles.join()) throw new Error(`${id}: not point-symmetric`)
+  return m
+}
+
+/** 今のマップ（v0.8）。上から 9×9 → 11×11 → 7×7 */
+export const CURRENT_MAP_IDS = ['block9', 'alley11', 'plaza7']
+
 export const MAPS: MapDef[] = [
-  defineMap('city9', '市街地 9×9', 9, [
+  // 街区: 中央の四つ角のビルが一番強い屋上。自陣そばの屋上は撃てる範囲が狭い
+  asciiMap('block9', '街区 9×9', [
+    '. . . # . . . . .',
+    '. # . # . # # . .',
+    '. # . . . . . . .',
+    '. . . # . # . # .',
+    '. # . . # . . # .',
+    '. # . # . # . . .',
+    '. . . . . . . # .',
+    '. . # # . # . # .',
+    '. . . . . # . . .',
+  ]),
+  // 路地: 短い壁で通りを細かく区切る。中央が一番強い屋上で、自陣から5手
+  asciiMap('alley11', '路地 11×11', [
+    '. . . . # . . . . . .',
+    '. # # . # . . # . . .',
+    '. # . . . . . # . . .',
+    '. . . # # . # . . # .',
+    '# . . . . . # . . # .',
+    '. . # . . # . . # . .',
+    '. # . . # . . . . . #',
+    '. # . . # . # # . . .',
+    '. . . # . . . . . # .',
+    '. . . # . . # . # # .',
+    '. . . . . . # . . . .',
+  ]),
+  // 広場: 狭い盤。中央のビルを囲む壁で左右を分ける
+  asciiMap('plaza7', '広場 7×7', [
+    '. . . . . . .',
+    '. # # . # . .',
+    '. . . . # . .',
+    '. # . # . # .',
+    '. . # . . . .',
+    '. . # . # # .',
+    '. . . . . . .',
+  ]),
+  // ---- 旧マップ（v0.7 まで。比較用） ----
+  defineMap('city9', '旧 市街地 9×9', 9, [
     [5, 1],
     [2, 2],
     [6, 3],
     [1, 4],
     [4, 4],
   ]),
-  defineMap('city11', '市街地 11×11', 11, [
+  defineMap('city11', '旧 市街地 11×11', 11, [
     [7, 1],
     [3, 2],
     [8, 3],
@@ -40,7 +96,7 @@ export const MAPS: MapDef[] = [
     [5, 5],
     [9, 2],
   ]),
-  defineMap('city7', '市街地 7×7', 7, [
+  defineMap('city7', '旧 市街地 7×7', 7, [
     [4, 1],
     [2, 2],
     [3, 3],

@@ -4,7 +4,7 @@ import { createGame, gameResult, moveOf, observe, resolveTurn, visibleEnemyIds }
 import { DEFAULT_RULES, mergeRules } from '../src/engine/rules.ts'
 import { createRng, seedStreams } from '../src/engine/rng.ts'
 import { replayRecord, type GameRecord } from '../src/engine/record.ts'
-import { MAPS } from '../src/engine/maps.ts'
+import { getMap, MAPS } from '../src/engine/maps.ts'
 import { coverFrom, hitChance } from '../src/engine/combat.ts'
 import { AI_PRESETS, decideOrders } from '../src/engine/ai.ts'
 import type { GameState, MapDef, Order, Pos } from '../src/engine/types.ts'
@@ -244,7 +244,7 @@ const tests: Record<string, () => void> = {
     const seed = 12345
     const st = seedStreams(seed)
     const rec: GameRecord = { version: 4, seed, map: 'city9', comps: [['attacker', 'gunner', 'sniper', 'scout'], ['attacker', 'attacker', 'gunner', 'scout']], rules: DEFAULT_RULES, turns: [] }
-    const g = createGame(MAPS[0], DEFAULT_RULES, rec.comps)
+    const g = createGame(getMap(rec.map), DEFAULT_RULES, rec.comps)
     while (!g.over) {
       const orders: [Order[], Order[]] = [decideOrders(observe(g, 0), st.ai, AI_PRESETS.aggressive), decideOrders(observe(g, 1), st.ai, AI_PRESETS.cpu)]
       rec.turns.push(structuredClone(orders))
