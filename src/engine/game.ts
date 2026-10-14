@@ -295,12 +295,12 @@ export function resolveTurn(state: GameState, orders: [Order[], Order[]], rng: R
       if (guard) {
         const gc = classOf(rules, guard)
         guardUsed.set(guard.id, (guardUsed.get(guard.id) ?? 0) + 1)
-        const dmg = Math.max(1, Math.round(rollDamage(rules, cls.atk, gc.def, rng) * (1 - gc.guardReduce)))
+        const dmg = Math.max(1, Math.round(rollDamage(rules, cls.atk, gc.def, rng, cls.pen) * (1 - gc.guardReduce)))
         guard.hp -= dmg
         shots.push({ hit, damage: dmg, guardedBy: guard.id })
         if (guard.hp <= 0) downed.push(guard), (guard.alive = false)
       } else {
-        const dmg = rollDamage(rules, cls.atk, tc.def, rng)
+        const dmg = rollDamage(rules, cls.atk, tc.def, rng, cls.pen)
         t.hp -= dmg
         shots.push({ hit, damage: dmg })
       }

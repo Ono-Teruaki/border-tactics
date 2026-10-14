@@ -227,7 +227,7 @@ class Battle {
     const c = classOf(rules, u)
     const tc = rules.classes[t.cls]
     const { chance, cover } = hitChance(this.map, rules, c, this.destOf(u), t.pos)
-    const [lo, hi] = damageRange(rules, c.atk, tc.def)
+    const [lo, hi] = damageRange(rules, c.atk, tc.def, c.pen)
     const coverText = cover === 'half' ? '（遮蔽:半）' : cover === 'light' ? '（遮蔽:小）' : ''
     return `狙い: 敵${tc.name} — 命中率${chance}%${coverText} × ${c.shots}発、1発${lo === hi ? lo : `${lo}〜${hi}`}ダメージ（速${c.spd} vs ${tc.spd}）`
   }

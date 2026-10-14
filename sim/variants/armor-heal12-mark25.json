@@ -1,0 +1,24 @@
+{
+  "combat": {
+    "formula": "armor",
+    "armorK": 20,
+    "damageScale": 0.7
+  },
+  "classes": {
+    "attacker": {
+      "pen": 4
+    },
+    "sniper": {
+      "pen": 12
+    },
+    "guardian": {
+      "def": 22
+    },
+    "medic": {
+      "heal": 12
+    }
+  },
+  "skills": {
+    "markAccBonus": 25
+  }
+}
