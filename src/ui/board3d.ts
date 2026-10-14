@@ -6,7 +6,7 @@ import { OutputPass } from 'three/addons/postprocessing/OutputPass.js'
 import { key, terrainId } from '../engine/grid.ts'
 import type { MapDef, Pos } from '../engine/types.ts'
 
-export type TileMark = 'fog' | 'reach' | 'range' | 'dest' | 'reachRange'
+export type TileMark = 'fog' | 'reach' | 'range' | 'dest' | 'reachRange' | 'veil'
 
 export interface PieceSpec {
   id: string
@@ -223,6 +223,7 @@ export class Board3D {
       if (m?.has('reach')) (color = C.me), (opacity = 0.3)
       if (m?.has('reachRange')) (color = 0x9a7cff), (opacity = 0.35)
       if (m?.has('dest')) (color = C.me), (opacity = 0.6)
+      if (m?.has('veil')) (color = 0x5ee6d0), (opacity = 0.35)
       mat.color.setHex(color)
       mat.opacity = opacity
     }
@@ -558,6 +559,51 @@ export class Board3D {
       this.tween(380, (t) => void ((trail.material as THREE.LineBasicMaterial).opacity = 1 - t)).then(() => void this.fxGroup.remove(trail))
     })
     return fly
+  }
+
+  /** 遮蔽フィールド: 六角格子の半透明な幕（範囲を覆う箱）。持ち主の色でうっすら色づける */
+  private veilGroup = new THREE.Group()
+  private veilKey = ''
+  setVeils(veils: { cells: Pos[]; side: 0 | 1 }[]) {
+    const k = JSON.stringify(veils)
+    if (k === this.veilKey) return
+    this.veilKey = k
+    if (!this.veilGroup.parent) this.scene.add(this.veilGroup)
+    for (const c of [...this.veilGroup.children]) this.veilGroup.remove(c)
+    for (const v of veils) {
+      if (!v.cells.length) continue
+      const xs = v.cells.map((c) => c.x)
+      const ys = v.cells.map((c) => c.y)
+      const x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys)
+      const w = x1 - x0 + 0.96, d = y1 - y0 + 0.96, hgt = BUILDING_H + 0.55
+      const tint = v.side === 0 ? 0x7fe9ff : 0xff9a8a
+      const mat = new THREE.MeshBasicMaterial({ map: hexTexture(), color: tint, transparent: true, opacity: 0.85, side: THREE.DoubleSide, depthWrite: false })
+      const box = new THREE.Mesh(new THREE.BoxGeometry(w, hgt, d), mat)
+      const cx = (x0 + x1) / 2 - this.half, cz = (y0 + y1) / 2 - this.half
+      box.position.set(cx, hgt / 2, cz)
+      box.renderOrder = 3
+      const edge = new THREE.LineSegments(new THREE.EdgesGeometry(box.geometry), new THREE.LineBasicMaterial({ color: tint, transparent: true, opacity: 0.8 }))
+      edge.position.copy(box.position)
+      this.veilGroup.add(box, edge)
+    }
+    this.requestRender()
+  }
+
+  /** 捕縛: 駒が放物線を描いて投げ飛ばされる */
+  async toss(id: string, to: Pos): Promise<void> {
+    const g = this.pieces.get(id)
+    if (!g) return
+    const from = g.position.clone()
+    const target = this.world(to)
+    ;(g.userData.body as THREE.Mesh).userData.tile = to
+    await this.tween(620, (t) => {
+      g.position.lerpVectors(from, target, t)
+      g.position.y += Math.sin(Math.PI * t) * 1.3
+      g.rotation.y = t * Math.PI * 2
+    })
+    g.rotation.y = 0
+    this.burst(to, 0x5ee6d0, 0.5)
+    await this.impact(0.7, false)
   }
 
   /** 曲射のマス狙い: 山なりに飛んで、狙ったマスで爆発する（当たった敵の表示は呼び出し側） */
@@ -1233,3 +1279,36 @@ function textSprite(text: string, color: string) {
   sprite.renderOrder = 10
   return sprite
 }
+
+/** 遮蔽フィールドの模様（六角形の格子）。テクスチャは使い回す */
+let hexTex: THREE.CanvasTexture | null = null
+function hexTexture(): THREE.CanvasTexture {
+  if (hexTex) return hexTex
+  const c = document.createElement('canvas')
+  c.width = c.height = 128
+  const g = c.getContext('2d')!
+  g.fillStyle = 'rgba(255,255,255,0.14)'
+  g.fillRect(0, 0, 128, 128)
+  g.strokeStyle = 'rgba(255,255,255,0.9)'
+  g.lineWidth = 2
+  const r = 16
+  const hw = Math.sqrt(3) * r
+  for (let row = -1; row < 6; row++)
+    for (let col = -1; col < 6; col++) {
+      const cx = col * hw + (row % 2 ? hw / 2 : 0)
+      const cy = row * r * 1.5
+      g.beginPath()
+      for (let i = 0; i < 6; i++) {
+        const a = (Math.PI / 3) * i + Math.PI / 6
+        const px = cx + r * Math.cos(a), py = cy + r * Math.sin(a)
+        i ? g.lineTo(px, py) : g.moveTo(px, py)
+      }
+      g.closePath()
+      g.stroke()
+    }
+  hexTex = new THREE.CanvasTexture(c)
+  hexTex.wrapS = hexTex.wrapT = THREE.RepeatWrapping
+  hexTex.repeat.set(2, 2)
+  return hexTex
+}
+

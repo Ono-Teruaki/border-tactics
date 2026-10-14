@@ -18,6 +18,13 @@ export function terrain(map: MapDef, rules: RulesConfig, p: Pos): TerrainRule {
   return rules.terrain[terrainId(map, p)]
 }
 
+const veilSets = new WeakMap<MapDef, Set<string>>()
+function veilSet(map: MapDef): Set<string> {
+  let s = veilSets.get(map)
+  if (!s) veilSets.set(map, (s = new Set(map.veil)))
+  return s
+}
+
 /**
  * 視線判定。始点と終点を除く途中のマスが遮蔽物（ビル）なら遮られる。seeOver（屋上から）なら遮られない。
  * 線がマスの境界ちょうどを通る場合は「両側とも遮蔽なら遮る」とし、
@@ -28,8 +35,12 @@ export function lineOfSight(map: MapDef, rules: RulesConfig, a: Pos, b: Pos, see
   const dy = b.y - a.y
   const steps = Math.max(Math.abs(dx), Math.abs(dy)) * 2
   if (steps === 0) return true
+  // 遮蔽フィールド: 通り抜ける視線は屋上からでも遮る。中にいる駒は、隣（8方向）以外から見えず、外も見えない
+  const veil = map.veil?.length ? veilSet(map) : null
+  if (veil && Math.max(Math.abs(dx), Math.abs(dy)) > 1 && (veil.has(`${a.x},${a.y}`) || veil.has(`${b.x},${b.y}`))) return false
   const blocks = (x: number, y: number) => {
     if ((x === a.x && y === a.y) || (x === b.x && y === b.y)) return false
+    if (veil?.has(`${x},${y}`)) return true
     const t = terrain(map, rules, { x, y })
     return t.blocksLos && !seeOver
   }

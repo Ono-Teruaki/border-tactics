@@ -3,7 +3,7 @@ import type { RulesConfig, UnitClass } from './types.ts'
 type ClassBase = Pick<UnitClass, 'id' | 'name' | 'kanji' | 'short' | 'hp' | 'atk' | 'def' | 'spd' | 'shots' | 'accuracy' | 'falloff' | 'move' | 'range' | 'vision' | 'cost'>
 /** スキル系の項目は既定値（なし）で埋める */
 function cls(c: ClassBase & Partial<UnitClass>): UnitClass {
-  return { attackMaxMove: 99, closePenalty: 0, pursuit: false, markOnSight: false, sonar: 0, suppress: false, steadyAim: false, heal: 0, healRange: 1, guardReduce: 0, pen: 0, evac: false, stealth: 0, jamOnClimb: false, arc: false, blast: 0, ...c }
+  return { attackMaxMove: 99, closePenalty: 0, pursuit: false, markOnSight: false, sonar: 0, suppress: false, steadyAim: false, heal: 0, healRange: 1, guardReduce: 0, pen: 0, evac: false, stealth: 0, jamOnClimb: false, arc: false, blast: 0, bind: false, veil: false, ...c }
 }
 
 /** ルールとユニット性能はすべてここ。シミュレーションでは差分を上書きして比較する */
@@ -16,6 +16,8 @@ export const DEFAULT_RULES: RulesConfig = {
     medic: cls({ id: 'medic', name: '衛生兵', kanji: '衛', short: 'M', hp: 20, atk: 6, def: 8, spd: 16, shots: 1, accuracy: 85, falloff: 8, move: 3, range: 2, vision: 4, cost: 2, heal: 6 }),
     jammer: cls({ id: 'jammer', name: 'ジャマー', kanji: '妨', short: 'J', hp: 20, atk: 7, def: 8, spd: 16, shots: 1, accuracy: 85, falloff: 8, move: 3, range: 2, vision: 4, cost: 2, jamOnClimb: true }),
     grenadier: cls({ id: 'grenadier', name: '擲弾兵', kanji: '爆', short: 'X', hp: 20, atk: 10, def: 7, spd: 12, shots: 1, accuracy: 70, falloff: 5, move: 2, range: 4, vision: 3, cost: 2, closePenalty: 30, arc: true, blast: 0.6 }),
+    binder: cls({ id: 'binder', name: '捕縛師', kanji: '縛', short: 'B', hp: 20, atk: 6, def: 8, spd: 18, shots: 1, accuracy: 85, falloff: 0, move: 3, range: 2, vision: 4, cost: 2, bind: true }),
+    screener: cls({ id: 'screener', name: '遮蔽兵', kanji: '幕', short: 'V', hp: 20, atk: 6, def: 8, spd: 14, shots: 1, accuracy: 85, falloff: 8, move: 3, range: 2, vision: 4, cost: 2, veil: true }),
     guardian: cls({ id: 'guardian', name: '防護兵', kanji: '護', short: 'D', hp: 30, atk: 8, def: 18, spd: 10, shots: 1, accuracy: 90, falloff: 0, move: 2, range: 1, vision: 3, cost: 2, guardReduce: 0.3 }),
   },
   teamSize: 4,
@@ -29,7 +31,7 @@ export const DEFAULT_RULES: RulesConfig = {
   radar: false,
   radarMark: false,
   cover: { fireOverBuildings: false, wallHug: true },
-  skills: { markDuration: 1, markAccBonus: 10, markPerTurn: 99, markCooldown: 0, suppressMove: 1, suppressAcc: 15, steadyAcc: 15, guardHitsPerTurn: 99, guardSameHeight: true, maxPerClass: 2, markTrigger: 'climb', stealthTrigger: 'descend', jamVision: 2, jamAcc: 20, jamDuration: 1, jamSilence: true, blastShape: 'plus', arcGround: true },
+  skills: { markDuration: 1, markAccBonus: 10, markPerTurn: 99, markCooldown: 0, suppressMove: 1, suppressAcc: 15, steadyAcc: 15, guardHitsPerTurn: 99, guardSameHeight: true, maxPerClass: 2, markTrigger: 'climb', stealthTrigger: 'descend', jamVision: 2, jamAcc: 20, jamDuration: 1, jamSilence: true, blastShape: 'plus', arcGround: true, veilRange: 3, veilRadius: 1, veilDuration: 1 },
   vision: { deadZone: true },
   combat: { variance: 0.15, damageScale: 1, formula: 'ratio', armorK: 20, coverModel: 'exposure', coverMax: 40, coverHalf: 25, coverLight: 12, highGround: 10, lowGround: 10, minHit: 5, maxHit: 99, initiativeJitter: 2 },
   attackReveals: true,
