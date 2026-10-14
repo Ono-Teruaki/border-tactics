@@ -42,6 +42,8 @@ export interface UnitClass {
   healRange: number
   /** カバーリング: 支援の手、周囲8マスの味方への命中弾を肩代わりし、この割合だけ軽減（0 = なし） */
   guardReduce: number
+  /** 貫通: 相手の守をこの値だけ無視する（formula = 'armor' のときだけ効く） */
+  pen: number
   move: number
   range: number
   vision: number
@@ -82,6 +84,13 @@ export interface RulesConfig {
     variance: number
     /** ダメージ全体の倍率（打たれ強さの調整用） */
     damageScale: number
+    /**
+     * ダメージの式
+     * - ratio: 攻² ÷ (攻 + 守)
+     * - armor: 攻 × K ÷ (K + 実効守)。実効守 = max(0, 守 − 攻撃側の貫通)。守が K のとき半減
+     */
+    formula: 'ratio' | 'armor'
+    armorK: number
     /** 遮蔽による命中率低下（%） */
     coverHalf: number
     coverLight: number

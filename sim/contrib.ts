@@ -125,7 +125,7 @@ function play(map: MapDef, r: RulesConfig, cs: [string[], string[]], seed: numbe
         hp.set(victim, hp.get(victim)! - d)
         per.get(victim)!.taken += d
         eff += d
-        if (s.guardedBy) per.get(s.guardedBy)!.guarded += Math.max(1, baseDamage(sc.atk, r.classes[target.cls].def, r.combat.damageScale)) - d
+        if (s.guardedBy) per.get(s.guardedBy)!.guarded += Math.max(1, baseDamage(r, sc.atk, r.classes[target.cls].def, sc.pen)) - d
       }
       per.get(e.unitId)!.dealt += eff
       sideDealt[shooter.side] += eff

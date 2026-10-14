@@ -56,24 +56,26 @@ export function hitChance(map: MapDef, rules: RulesConfig, cls: UnitClass, from:
   return { chance: Math.max(c.minHit, Math.min(c.maxHit, Math.round(p))), cover }
 }
 
-/** 1発の基本ダメージ（乱数なし）。scale は全体の倍率（rules.combat.damageScale） */
-export function baseDamage(atk: number, def: number, scale = 1): number {
-  return ((atk * atk) / (atk + def)) * scale
+/** 1発の基本ダメージ（乱数なし）。式は rules.combat.formula、pen は攻撃側の貫通 */
+export function baseDamage(rules: RulesConfig, atk: number, def: number, pen = 0): number {
+  const c = rules.combat
+  const raw = c.formula === 'armor' ? (atk * c.armorK) / (c.armorK + Math.max(0, def - pen)) : (atk * atk) / (atk + def)
+  return raw * c.damageScale
 }
 
-export function rollDamage(rules: RulesConfig, atk: number, def: number, rng: Rng): number {
+export function rollDamage(rules: RulesConfig, atk: number, def: number, rng: Rng, pen = 0): number {
   const v = rules.combat.variance
-  return Math.max(1, Math.round(baseDamage(atk, def, rules.combat.damageScale) * (1 + (rng.next() * 2 - 1) * v)))
+  return Math.max(1, Math.round(baseDamage(rules, atk, def, pen) * (1 + (rng.next() * 2 - 1) * v)))
 }
 
 /** 期待ダメージ（AI・UI予測用） */
 export function expectedDamage(map: MapDef, rules: RulesConfig, atkCls: UnitClass, defCls: UnitClass, from: Pos, target: Pos, opts: HitOpts = {}): number {
   const { chance } = hitChance(map, rules, atkCls, from, target, opts)
-  return (chance / 100) * atkCls.shots * Math.max(1, baseDamage(atkCls.atk, defCls.def, rules.combat.damageScale))
+  return (chance / 100) * atkCls.shots * Math.max(1, baseDamage(rules, atkCls.atk, defCls.def, atkCls.pen))
 }
 
-export function damageRange(rules: RulesConfig, atk: number, def: number): [number, number] {
-  const b = baseDamage(atk, def, rules.combat.damageScale)
+export function damageRange(rules: RulesConfig, atk: number, def: number, pen = 0): [number, number] {
+  const b = baseDamage(rules, atk, def, pen)
   const v = rules.combat.variance
   return [Math.max(1, Math.round(b * (1 - v))), Math.max(1, Math.round(b * (1 + v)))]
 }
