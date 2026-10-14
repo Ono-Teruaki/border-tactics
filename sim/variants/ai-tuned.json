@@ -1,0 +1,15 @@
+{
+  "ai": {
+    "cpu": {
+      "aggression": 0.884,
+      "caution": 2.912,
+      "scouting": 0.125,
+      "roofPref": 0.154,
+      "rush": 0.317,
+      "evade": 0.361,
+      "fireWeight": 1.613,
+      "cohesion": 0.525,
+      "focus": 0.196
+    }
+  }
+}

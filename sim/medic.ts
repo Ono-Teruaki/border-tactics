@@ -26,7 +26,10 @@ const arg = (n: string, d: string) => (args.includes(`--${n}`) ? args[args.index
 const OPP = Number(arg('opp', '24'))
 const VARIANT = arg('variant', '')
 const OUT = arg('out', VARIANT ? `medic-${basename(VARIANT, '.json')}` : 'medic')
-const rules = VARIANT ? mergeRules(DEFAULT_RULES, JSON.parse(readFileSync(VARIANT, 'utf8'))) : DEFAULT_RULES
+const VAR = VARIANT ? JSON.parse(readFileSync(VARIANT, 'utf8')) : {}
+// variant の ai（CPUの重みの差分）は CPU の設定に、maps 以外の残りはルールに当てる
+for (const [k, v] of Object.entries((VAR.ai ?? {}) as Record<string, object>)) Object.assign(AI_PRESETS[k], v)
+const rules = mergeRules(DEFAULT_RULES, (({ ai: _a, maps: _m, ...o }) => o)(VAR))
 const classIds = Object.keys(rules.classes)
 const legal = allComps(classIds, rules.teamSize).filter((c) => classIds.every((k) => c.filter((x) => x === k).length <= rules.skills.maxPerClass))
 const withMedic = legal.map((c, i) => ({ c, i })).filter(({ c }) => c.includes('medic'))

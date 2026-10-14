@@ -30,6 +30,12 @@ export interface AiParams {
   healerLast?: boolean
   /** 衛生兵は撃たずに、いつも支援（回復）の手にする */
   healerNoFire?: boolean
+  /** 撃つ価値の重み（支援との比較にも使う。既定 1.5） */
+  fireWeight?: number
+  /** 支援役が味方の隣に寄る強さ（既定 0.4） */
+  cohesion?: number
+  /** 集中砲火: 味方がすでに狙っている敵を狙う価値の上乗せ（既定 0） */
+  focus?: number
   random?: boolean
 }
 
@@ -67,7 +73,9 @@ export function decideOrders(obs: Observation, rng: Rng, params: AiParams): Orde
     .filter((e) => e.age <= params.memory || e.turn === 0)
   const isSupport = (u: Unit) => classOf(rules, u).heal > 0 || classOf(rules, u).guardReduce > 0
   const isLateHealer = (u: Unit) => !!params.healerLast && classOf(rules, u).heal > 0
-  const ctx: Ctx = { obs, known, reserved: new Set(), planned: new Map(obs.mine.map((u) => [u.id, u.pos])), guards: [], rng, p: params }
+  const ctx: Ctx = { obs, known, reserved: new Set(), planned: new Map(obs.mine.map((u) => [u.id, u.pos])), guards: [], targets: new Map(), rng, p: params }
+  const fw = params.fireWeight ?? 1.5
+  const aim = (o: Order) => o.target && ctx.targets.set(o.target, (ctx.targets.get(o.target) ?? 0) + 1)
   const orders = new Map<string, Order>()
   // 1) 支援役が先に位置を決める（味方の現在位置を基準）
   for (const u of obs.mine.filter((x) => isSupport(x) && !isLateHealer(x))) {
@@ -76,6 +84,7 @@ export function decideOrders(obs: Observation, rng: Rng, params: AiParams): Orde
     ctx.planned.set(u.id, o.dest)
     if (classOf(rules, u).guardReduce > 0) ctx.guards.push(o.dest)
     orders.set(u.id, o)
+    aim(o)
   }
   // 2) 戦闘役（射程の長い順に良い位置を取る）。防護兵の隣は被弾リスクが下がる
   for (const u of obs.mine.filter((x) => !isSupport(x)).sort((a, b) => classOf(rules, b).range - classOf(rules, a).range)) {
@@ -83,6 +92,7 @@ export function decideOrders(obs: Observation, rng: Rng, params: AiParams): Orde
     ctx.reserved.add(key(o.dest))
     ctx.planned.set(u.id, o.dest)
     orders.set(u.id, o)
+    aim(o)
   }
   // 2b) healerLast: 衛生兵は、戦闘役の移動先が決まってから位置を決める
   for (const u of obs.mine.filter(isLateHealer)) {
@@ -90,6 +100,7 @@ export function decideOrders(obs: Observation, rng: Rng, params: AiParams): Orde
     ctx.reserved.add(key(o.dest))
     ctx.planned.set(u.id, o.dest)
     orders.set(u.id, o)
+    aim(o)
   }
   // 3) 支援役は、確定した味方の位置で「撃つか支援か」を決め直す
   for (const u of obs.mine.filter(isSupport)) {
@@ -100,7 +111,7 @@ export function decideOrders(obs: Observation, rng: Rng, params: AiParams): Orde
     }
     const sup = supportValue(ctx, u, o.dest)
     const fire = fireValue(ctx, u, o.dest)
-    orders.set(u.id, { ...o, target: sup.value >= fire.value * 1.5 * params.aggression || !fire.target ? undefined : fire.target })
+    orders.set(u.id, { ...o, target: sup.value >= fire.value * fw * params.aggression || !fire.target ? undefined : fire.target })
   }
   return obs.mine.map((u) => orders.get(u.id)!)
 }
@@ -113,6 +124,8 @@ interface Ctx {
   planned: Map<string, Pos>
   /** 防護兵の予定位置 */
   guards: Pos[]
+  /** 決定済みの味方の狙い（敵ID → 狙っている数） */
+  targets: Map<string, number>
   rng: Rng
   p: AiParams
 }
@@ -137,7 +150,7 @@ function fireValue(ctx: Ctx, u: Unit, pos: Pos): { value: number; target?: strin
       (cls.pursuit && dist(pos, e.pos) > 1 ? 0.6 : 1)
     const kill = exp >= hp ? 1 + ec.cost * 0.5 : 1
     // マーク中の敵は次の手も見え続けるので、狙いを継続しやすい
-    const v = Math.min(1, exp / hp) * 3 * kill * 0.6 * (e.marked ? 1.15 : 1)
+    const v = Math.min(1, exp / hp) * 3 * kill * 0.6 * (e.marked ? 1.15 : 1) * (1 + (ctx.p.focus ?? 0) * (ctx.targets.get(e.unitId) ?? 0))
     if (v > value) (value = v), (target = e.unitId)
   }
   return { value, target }
@@ -169,6 +182,18 @@ function supportValue(ctx: Ctx, u: Unit, pos: Pos): { value: number } {
     if (c.heal > 0 && chebyshev(ap, pos) <= c.healRange) value += (Math.min(c.heal, ac.hp - a.hp) / 10) * 1.2
     if (c.guardReduce > 0 && chebyshev(ap, pos) <= 1 && (!rules.skills.guardSameHeight || terrainId(ctx.obs.map, ap) === terrainId(ctx.obs.map, pos)))
       value += threatAt(ctx, ac, a.hp, ap) * 0.5
+  }
+  // 後送: 今隣にいる一番傷の深い味方を、pos の隣（より安全な場所）へ連れ戻して回復する
+  if (c.evac) {
+    const hurt = ctx.obs.mine
+      .filter((a) => a.id !== u.id && chebyshev(a.pos, u.pos) <= 1 && a.hp < classOf(rules, a).hp)
+      .sort((a, b) => classOf(rules, b).hp - b.hp - (classOf(rules, a).hp - a.hp))[0]
+    if (hurt) {
+      const hc = classOf(rules, hurt)
+      const ap = ctx.planned.get(hurt.id) ?? hurt.pos
+      if (chebyshev(ap, pos) > c.healRange) value += (Math.min(c.heal, hc.hp - hurt.hp) / 10) * 1.2
+      value += Math.max(0, threatAt(ctx, hc, hurt.hp, ap) - threatAt(ctx, hc, hurt.hp, pos)) * 0.6
+    }
   }
   return { value }
 }
@@ -235,13 +260,13 @@ function bestOrder(ctx: Ctx, u: Unit): Order {
 
     // 支援役は味方の近くにいたい
     let cohesion = 0
-    if (isSupport) for (const [id, ap] of ctx.planned) if (id !== u.id && chebyshev(ap, pos) <= 1) cohesion += 0.4
+    if (isSupport) for (const [id, ap] of ctx.planned) if (id !== u.id && chebyshev(ap, pos) <= 1) cohesion += ctx.p.cohesion ?? 0.4
 
     const roof = t.visionBonus > 0 && (cls.range > 1 || isScout) ? 1 + visionRange(map, rules, u.cls, pos) * 0.05 : 0
-    const action = Math.max(fire.value * 1.5, sup)
+    const action = Math.max(fire.value * (p.fireWeight ?? 1.5), sup)
     const score =
       p.aggression * (action + progress) - p.caution * threat * 0.6 + p.scouting * scout + p.roofPref * roof + p.rush * rush + p.evade * evade + cohesion + rng.next() * p.noise
-    if (!best || score > best.score) best = { score, pos, target: sup > fire.value * 1.5 ? undefined : fire.target }
+    if (!best || score > best.score) best = { score, pos, target: sup > fire.value * (p.fireWeight ?? 1.5) ? undefined : fire.target }
   }
   const dest = best?.pos ?? { ...u.pos }
   // 射程内に見込みがなければ、最も近い視認中の敵を狙っておく（相手が寄ってくれば当たる）。支援役は除く
