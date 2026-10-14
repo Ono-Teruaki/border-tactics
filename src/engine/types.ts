@@ -148,6 +148,8 @@ export interface RulesConfig {
     jamVision: number
     jamAcc: number
     jamDuration: number
+    /** 爆風の形: plus = 上下左右、square = 周囲8マス */
+    blastShape: 'plus' | 'square'
   }
   vision: {
     /** 屋上から見ても、ビルの裏側に張り付いた地上のマスは見えない */

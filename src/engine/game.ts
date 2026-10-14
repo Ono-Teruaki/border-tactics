@@ -27,6 +27,12 @@ export const classOf = (rules: RulesConfig, u: { cls: string }): UnitClass => ru
 /** 周囲8マス判定用の距離 */
 export const chebyshev = (a: Pos, b: Pos) => Math.max(Math.abs(a.x - b.x), Math.abs(a.y - b.y))
 
+/** b が a を中心とした爆風の範囲（中心を除く）に入るか */
+export function inBlast(rules: RulesConfig, a: Pos, b: Pos): boolean {
+  const d = rules.skills.blastShape === 'square' ? chebyshev(a, b) : Math.abs(a.x - b.x) + Math.abs(a.y - b.y)
+  return d === 1
+}
+
 export function attackRange(map: MapDef, rules: RulesConfig, cls: string, at: Pos): number {
   return rules.classes[cls].range + terrain(map, rules, at).rangeBonus
 }
@@ -344,7 +350,7 @@ export function resolveTurn(state: GameState, orders: [Order[], Order[]], rng: R
     if (cls.blast > 0 && direct.length) {
       splash = []
       for (const o of alive) {
-        if (!o.alive || o.side === u.side || o.id === t.id || Math.abs(o.pos.x - t.pos.x) + Math.abs(o.pos.y - t.pos.y) !== 1) continue
+        if (!o.alive || o.side === u.side || o.id === t.id || !inBlast(rules, t.pos, o.pos)) continue
         const dmg = Math.max(1, Math.round(rollDamage(rules, cls.atk, classOf(rules, o).def, rng, cls.pen) * cls.blast))
         o.hp -= dmg
         splash.push({ id: o.id, damage: dmg, hp: Math.max(0, o.hp) })
