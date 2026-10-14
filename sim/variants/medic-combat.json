@@ -1,0 +1,1 @@
+{ "classes": { "medic": { "hp": 26, "atk": 12, "def": 10, "spd": 18, "range": 1, "accuracy": 95, "falloff": 0 } } }

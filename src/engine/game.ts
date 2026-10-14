@@ -124,9 +124,10 @@ function updateIntel(state: GameState) {
         continue
       }
       if (vis.has(e.id)) {
-        intel[e.id] = { unitId: e.id, cls: e.cls, pos: { ...e.pos }, hp: e.hp, turn: state.turn, visible: true }
+        intel[e.id] = { unitId: e.id, cls: e.cls, pos: { ...e.pos }, hp: e.hp, turn: state.turn, visible: true, marked: e.markedUntil >= state.turn + 1 }
       } else if (intel[e.id]) {
         intel[e.id].visible = false
+        intel[e.id].marked = false
       }
     }
   }
@@ -282,6 +283,7 @@ export function resolveTurn(state: GameState, orders: [Order[], Order[]], rng: R
             classOf(rules, g).guardReduce > 0 &&
             supporting(g) &&
             chebyshev(g.pos, t.pos) <= 1 &&
+            (!rules.skills.guardSameHeight || terrainId(map, g.pos) === terrainId(map, t.pos)) &&
             (guardUsed.get(g.id) ?? 0) < rules.skills.guardHitsPerTurn,
         )
         .sort((a, b) => b.hp - a.hp)[0]
@@ -331,7 +333,7 @@ export function resolveTurn(state: GameState, orders: [Order[], Order[]], rng: R
     if (!u.alive || c.heal <= 0 || !supporting(u)) continue
     const healed: { id: string; amount: number }[] = []
     for (const a of alive) {
-      if (!a.alive || a.side !== u.side || a.id === u.id || chebyshev(a.pos, u.pos) > 1) continue
+      if (!a.alive || a.side !== u.side || a.id === u.id || chebyshev(a.pos, u.pos) > c.healRange) continue
       const amount = Math.min(c.heal, classOf(rules, a).hp - a.hp)
       if (amount <= 0) continue
       a.hp += amount

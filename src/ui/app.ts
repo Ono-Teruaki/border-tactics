@@ -288,6 +288,7 @@ class Battle {
         maxHp: c.hp,
         pos: i.pos,
         ghost: !i.visible,
+        marked: !!i.marked,
         label: i.visible ? undefined : i.turn === 0 ? '初期位置' : age <= 0 ? '直前' : `${age}手前`,
       })
     }

@@ -1,6 +1,6 @@
 import { expectedDamage } from './combat.ts'
 import { attackRange, canSee, canStrike, chebyshev, classOf, reachableFor, visionRange } from './game.ts'
-import { dist, key, samePos, terrain } from './grid.ts'
+import { dist, key, lineOfSight, samePos, terrain, terrainId } from './grid.ts'
 import type { Rng } from './rng.ts'
 import type { Intel, Observation, Order, Pos, Unit, UnitClass } from './types.ts'
 
@@ -116,9 +116,12 @@ function fireValue(ctx: Ctx, u: Unit, pos: Pos): { value: number; target?: strin
     if (!reach) continue
     const ec = classOf(rules, e)
     const hp = e.hp ?? ec.hp
-    const exp = expectedDamage(map, rules, cls, ec, cls.pursuit ? e.pos : pos, e.pos, { stationary: samePos(pos, u.pos) }) * (cls.pursuit && dist(pos, e.pos) > 1 ? 0.6 : 1)
+    const exp =
+      expectedDamage(map, rules, cls, ec, cls.pursuit ? e.pos : pos, e.pos, { stationary: samePos(pos, u.pos), marked: !!e.marked }) *
+      (cls.pursuit && dist(pos, e.pos) > 1 ? 0.6 : 1)
     const kill = exp >= hp ? 1 + ec.cost * 0.5 : 1
-    const v = Math.min(1, exp / hp) * 3 * kill * 0.6
+    // マーク中の敵は次の手も見え続けるので、狙いを継続しやすい
+    const v = Math.min(1, exp / hp) * 3 * kill * 0.6 * (e.marked ? 1.15 : 1)
     if (v > value) (value = v), (target = e.unitId)
   }
   return { value, target }
@@ -146,10 +149,10 @@ function supportValue(ctx: Ctx, u: Unit, pos: Pos): { value: number } {
   for (const a of ctx.obs.mine) {
     if (a.id === u.id) continue
     const ap = ctx.planned.get(a.id) ?? a.pos
-    if (chebyshev(ap, pos) > 1) continue
     const ac = classOf(rules, a)
-    if (c.heal > 0) value += (Math.min(c.heal, ac.hp - a.hp) / 10) * 1.2
-    if (c.guardReduce > 0) value += threatAt(ctx, ac, a.hp, ap) * 0.5
+    if (c.heal > 0 && chebyshev(ap, pos) <= c.healRange) value += (Math.min(c.heal, ac.hp - a.hp) / 10) * 1.2
+    if (c.guardReduce > 0 && chebyshev(ap, pos) <= 1 && (!rules.skills.guardSameHeight || terrainId(ctx.obs.map, ap) === terrainId(ctx.obs.map, pos)))
+      value += threatAt(ctx, ac, a.hp, ap) * 0.5
   }
   return { value }
 }
@@ -171,11 +174,27 @@ function bestOrder(ctx: Ctx, u: Unit): Order {
 
     // 被弾リスク（遮蔽込み）。防護兵の隣なら軽減
     let threat = threatAt(ctx, cls, u.hp, pos)
-    if (!isSupport && ctx.guards.some((g) => chebyshev(g, pos) <= 1)) threat *= 0.5
+    if (!isSupport && ctx.guards.some((g) => chebyshev(g, pos) <= 1 && (!rules.skills.guardSameHeight || terrainId(map, g) === terrainId(map, pos)))) threat *= 0.5
 
-    // 索敵：敵の（最終）位置を視界に収める
+    // 索敵：敵の（最終）位置を視界に収める。観測持ちは「見失った敵を見つけ直す」「味方の射程にいる敵をマークする」を重視
     let scout = 0
-    for (const e of known) if (canSee(map, rules, u.cls, pos, e.pos)) scout += e.age === 0 ? 0.5 : 1
+    for (const e of known) {
+      if (!canSee(map, rules, u.cls, pos, e.pos)) continue
+      if (!cls.markOnSight) {
+        scout += e.age === 0 ? 0.5 : 1
+        continue
+      }
+      let v = e.age === 0 ? 0.6 : 1.4
+      // 味方の射手がこの敵を撃てそうなら、マークの価値が上がる
+      for (const a of obs.mine) {
+        if (a.id === u.id) continue
+        const ac = classOf(rules, a)
+        if (ac.range > 1 && dist(ctx.planned.get(a.id) ?? a.pos, e.pos) <= attackRange(map, rules, a.cls, ctx.planned.get(a.id) ?? a.pos)) v += 0.6
+      }
+      // 透視でしか見えない（ビルの裏）敵を暴く
+      if (cls.sonar > 0 && dist(pos, e.pos) <= cls.sonar && !canSeeNoSonar(map, rules, u.cls, pos, e.pos)) v += 0.8
+      scout += v
+    }
     if (isScout) scout *= 1.5
 
     // 詰め寄り / 回避
@@ -216,4 +235,10 @@ function bestOrder(ctx: Ctx, u: Unit): Order {
     target = vis[0]?.unitId
   }
   return { unitId: u.id, dest, target }
+}
+
+/** 透視を使わない場合に見えるか（透視の価値の見積もり用） */
+function canSeeNoSonar(map: Observation['map'], rules: Observation['rules'], cls: string, at: Pos, target: Pos): boolean {
+  if (dist(at, target) > visionRange(map, rules, cls, at)) return false
+  return lineOfSight(map, rules, at, target, terrain(map, rules, at).seesOverBlockers)
 }

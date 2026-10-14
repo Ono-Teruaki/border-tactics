@@ -158,6 +158,19 @@ const tests: Record<string, () => void> = {
     // round(20²/(20+18)) = 11 → ×0.7 = 7.7 → 8 を2発
     assert.equal(unit(g, '1-1').hp, 30 - 16)
   },
+  'カバーリング: 高さが違う味方（屋上と地上）は庇えない'() {
+    const m = mapOf(['.......', '....#..', '.......'], [{ x: 0, y: 1 }, { x: 0, y: 2 }], [{ x: 3, y: 1 }, { x: 4, y: 1 }])
+    const g = createGame(m, rules2, [['sniper', 'sniper'], ['gunner', 'guardian']])
+    const ev = resolveTurn(g, [stay(g, 0, '1-0'), [mv('1-0', 3, 1), mv('1-1', 4, 1)]], createRng(1))
+    const a = ev.find((e) => e.type === 'attack' && e.hitId === '1-0')!
+    assert.ok(a.type === 'attack' && a.shots.every((x) => !x.guardedBy))
+  },
+  '応急手当: 回復範囲は healRange'() {
+    const g = createGame(mapOf(open, [{ x: 1, y: 1 }, { x: 3, y: 3 }], [{ x: 6, y: 4 }, { x: 6, y: 0 }]), mergeRules(rules2, { classes: { medic: { healRange: 2 } } }), [['medic', 'attacker'], ['gunner', 'gunner']])
+    g.units[1].hp = 10
+    resolveTurn(g, [stay(g, 0), stay(g, 1)], createRng(1))
+    assert.equal(unit(g, '0-1').hp, 16)
+  },
   '応急手当: 支援中の衛生兵が周囲8マスの味方を回復'() {
     const g = createGame(mapOf(open, [{ x: 1, y: 1 }, { x: 2, y: 2 }], [{ x: 6, y: 4 }, { x: 6, y: 0 }]), rules2, [['medic', 'attacker'], ['gunner', 'gunner']])
     g.units[1].hp = 10

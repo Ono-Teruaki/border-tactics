@@ -37,8 +37,9 @@ export interface UnitClass {
   suppress: boolean
   /** 狙撃態勢: 移動しなかった手は命中率アップ・遮蔽の影響半減 */
   steadyAim: boolean
-  /** 応急手当: 支援（狙いなし）の手の終わりに周囲8マスの味方を回復する量（0 = なし） */
+  /** 応急手当: 支援（狙いなし）の手の終わりに、周囲 healRange マス（8方向）の味方を回復する量（0 = なし） */
   heal: number
+  healRange: number
   /** カバーリング: 支援の手、周囲8マスの味方への命中弾を肩代わりし、この割合だけ軽減（0 = なし） */
   guardReduce: number
   move: number
@@ -104,6 +105,8 @@ export interface RulesConfig {
     steadyAcc: number
     /** 防護兵1体が1手で肩代わりできる命中弾の数 */
     guardHitsPerTurn: number
+    /** 防護兵は高さ（屋上/地上）が同じ味方だけを庇える */
+    guardSameHeight: boolean
     /** 同じクラスを編成できる上限 */
     maxPerClass: number
   }
@@ -166,6 +169,8 @@ export interface Intel {
   turn: number
   /** 今まさに見えているか */
   visible: boolean
+  /** 自軍がマークしている（次の手も見え続け、命中+） */
+  marked?: boolean
 }
 
 export type GameEvent =

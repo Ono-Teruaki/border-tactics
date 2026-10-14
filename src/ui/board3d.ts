@@ -16,6 +16,8 @@ export interface PieceSpec {
   label?: string
   selected?: boolean
   targeted?: boolean
+  /** マーク中（緑の印） */
+  marked?: boolean
 }
 
 export interface PlanSpec {
@@ -258,7 +260,7 @@ export class Board3D {
     body.castShadow = !spec.ghost
     g.getObjectByName('ring')!.visible = !!spec.selected
     g.getObjectByName('reticle')!.visible = !!spec.targeted
-    const tk = `${spec.letter}|${spec.side}|${spec.hp}|${spec.maxHp}|${spec.label}|${spec.ghost}`
+    const tk = `${spec.letter}|${spec.side}|${spec.hp}|${spec.maxHp}|${spec.label}|${spec.ghost}|${spec.marked}`
     if (g.userData.tagKey !== tk) {
       tag.material.map?.dispose()
       tag.material.map = tagTexture(spec)
@@ -920,6 +922,13 @@ function tagTexture(spec: PieceSpec) {
   g.textBaseline = 'middle'
   g.textAlign = 'center'
   g.fillText(spec.letter, 30, H / 2 + 1)
+  if (spec.marked) {
+    g.beginPath()
+    g.arc(W - 10, 10, 8, 0, Math.PI * 2)
+    g.fillStyle = '#1f9d55'
+    g.fill()
+    g.fillStyle = spec.side === 0 ? '#1d2330' : '#ffffff'
+  }
   if (spec.label) {
     g.font = '700 22px system-ui, sans-serif'
     g.fillText(spec.label, 100, H / 2 + 1)
