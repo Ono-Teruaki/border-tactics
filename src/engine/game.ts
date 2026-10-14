@@ -63,7 +63,8 @@ export const isMeleeClass = (rules: RulesConfig, cls: string) => rules.classes[c
 /**
  * 攻撃の可否（射程・射線・遮蔽）。視界とは別物:
  * - 射線上にビルがあれば撃てない（屋上からでも。fireOverBuildings で緩和）
- * - 屋上から、撃ち手側のビルに張り付いている地上の敵は撃てない（真下は狙えない）。
+ * - 屋上から、自分が乗っているビルに張り付いている地上の敵（真下）は撃てない。
+ *   他のビルに張り付いている敵は撃てる（命中率の遮蔽がかかる）。
  *   これは射撃だけの制限で、近接クラスが隣接した敵を攻撃するときはかからない
  */
 export function strikeCheck(map: MapDef, rules: RulesConfig, at: Pos, target: Pos, range: number, melee = false): StrikeBlock | null {
@@ -71,7 +72,7 @@ export function strikeCheck(map: MapDef, rules: RulesConfig, at: Pos, target: Po
   if (d > range) return 'range'
   const fromRoof = terrainId(map, at) === 'building'
   if (!lineOfSight(map, rules, at, target, fromRoof && rules.cover.fireOverBuildings)) return 'blocked'
-  if (rules.cover.wallHug && fromRoof && !(melee && d === 1) && isWallHugging(map, at, target)) return 'cover'
+  if (rules.cover.wallHug && fromRoof && !melee && d === 1 && terrainId(map, target) !== 'building') return 'cover'
   return null
 }
 
