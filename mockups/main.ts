@@ -54,12 +54,13 @@ const kanji = (cls: string) => DEFAULT_RULES.classes[cls].kanji
 const world = (p: Pos, lift = 0) => new THREE.Vector3(p.x - HALF, level(p) * LEVEL_H + lift, p.y - HALF)
 
 // ---------- 共通 ----------
-const themeId = new URLSearchParams(location.search).get('theme') ?? 'holo'
+const themeId = new URLSearchParams(location.search).get('theme') ?? 'holo2'
 document.body.className = themeId
 const THEMES = [
-  ['holo', '① ホロ'],
-  ['diorama', '② ジオラマ'],
-  ['paper', '③ 地図'],
+  ['holo2', '★ホロ＋'],
+  ['holo', '①'],
+  ['diorama', '②'],
+  ['paper', '③'],
 ]
 document.getElementById('themes')!.innerHTML = THEMES.map(([id, name]) => `<a href="?theme=${id}" class="${id === themeId ? 'on' : ''}">${name}</a>`).join('')
 
@@ -753,6 +754,269 @@ function paper() {
   return () => renderer.render(scene, camera)
 }
 
-const render = { holo, diorama, paper }[themeId as 'holo']?.() ?? holo()
+
+// ======================================================================
+// ★ ホロ＋（①ホロをベースに、②ジオラマの取っつきやすさを足す）
+// - 背景は真っ黒にせず、深い紺の作戦卓。視界は光で、視界の境目は明るい線で見せる
+// - 駒は光る記号ではなく、陣営色のはっきりした立体の人形（ジオラマ由来）。足元が光る
+// - 札は「クラスの字＋HPバー」の陣営色のピル。ビルは半透明のガラスに段の線
+// ======================================================================
+function holo2() {
+  const ME = 0x37c3ff
+  const EN = 0xff5b47
+  const hex = (c: number) => '#' + c.toString(16).padStart(6, '0')
+  scene.background = canvas(4, 256, (g) => {
+    const gr = g.createLinearGradient(0, 0, 0, 256)
+    gr.addColorStop(0, '#0d1b2e')
+    gr.addColorStop(1, '#1a2d47')
+    g.fillStyle = gr
+    g.fillRect(0, 0, 4, 256)
+  })
+  scene.add(new THREE.HemisphereLight(0xbfe6ff, 0x0b1626, 1.1))
+  const keyLight = new THREE.DirectionalLight(0xe6f4ff, 2.0)
+  keyLight.position.set(-5, 11, 6)
+  keyLight.castShadow = true
+  keyLight.shadow.mapSize.set(2048, 2048)
+  keyLight.shadow.bias = -0.0005
+  Object.assign(keyLight.shadow.camera, { left: -8, right: 8, top: 8, bottom: -8, near: 1, far: 40 })
+  scene.add(keyLight)
+
+  // 卓：厚みのある台＋光る縁
+  const table = new THREE.Mesh(new THREE.BoxGeometry(N + 1.0, 0.35, N + 1.0), new THREE.MeshStandardMaterial({ color: 0x14263d, roughness: 0.6, metalness: 0.2 }))
+  table.position.y = -0.18
+  table.receiveShadow = true
+  scene.add(table)
+  const rim = new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.BoxGeometry(N + 1.0, 0.35, N + 1.0)), new THREE.LineBasicMaterial({ color: 0x3fa9d6 }))
+  rim.position.y = -0.18
+  scene.add(rim)
+  // 盤面：マス目を焼き込んだテクスチャ。見えているマスは明るく、霧のマスは暗く走査線
+  const S = 64
+  const surface = canvas(N * S, N * S, (g) => {
+    for (const c of cells) {
+      const seen = visible.has(key(c))
+      g.fillStyle = seen ? '#1d4566' : '#0c1828'
+      g.fillRect(c.x * S, c.y * S, S, S)
+      if (seen) {
+        const gr = g.createRadialGradient(c.x * S + S / 2, c.y * S + S / 2, 4, c.x * S + S / 2, c.y * S + S / 2, S * 0.7)
+        gr.addColorStop(0, 'rgba(90,200,255,0.18)')
+        gr.addColorStop(1, 'rgba(90,200,255,0)')
+        g.fillStyle = gr
+        g.fillRect(c.x * S, c.y * S, S, S)
+      } else {
+        g.strokeStyle = 'rgba(120,150,190,0.10)'
+        g.lineWidth = 2
+        for (let i = 4; i < S; i += 8) {
+          g.beginPath()
+          g.moveTo(c.x * S, c.y * S + i)
+          g.lineTo(c.x * S + S, c.y * S + i)
+          g.stroke()
+        }
+      }
+      g.strokeStyle = seen ? 'rgba(110,210,255,0.35)' : 'rgba(110,160,210,0.12)'
+      g.lineWidth = 2
+      g.strokeRect(c.x * S + 1, c.y * S + 1, S - 2, S - 2)
+    }
+    // 出撃区画
+    for (const [side, col] of [
+      [0, 'rgba(55,195,255,0.55)'],
+      [1, 'rgba(255,91,71,0.55)'],
+    ] as const) {
+      g.strokeStyle = col
+      g.lineWidth = 3
+      g.setLineDash([8, 6])
+      const xs = map.spawns[side].map((p) => p.x)
+      const ys = map.spawns[side].map((p) => p.y)
+      g.strokeRect(Math.min(...xs) * S + 6, Math.min(...ys) * S + 6, 2 * S - 12, 2 * S - 12)
+      g.setLineDash([])
+    }
+  })
+  const board = new THREE.Mesh(new THREE.PlaneGeometry(N, N), new THREE.MeshStandardMaterial({ map: surface, roughness: 0.55, metalness: 0.1 }))
+  board.rotation.x = -Math.PI / 2
+  board.position.y = 0.001
+  board.receiveShadow = true
+  scene.add(board)
+
+  // 視界の境目：見えている地上マスと見えないマスの間に光る線
+  const edgeMat = new THREE.MeshBasicMaterial({ color: 0x7fe3ff, transparent: true, opacity: 0.9 })
+  for (const c of cells) {
+    if (!visible.has(key(c))) continue
+    for (const [dx, dy] of [
+      [1, 0],
+      [-1, 0],
+      [0, 1],
+      [0, -1],
+    ]) {
+      const n = { x: c.x + dx, y: c.y + dy }
+      if (n.x < 0 || n.y < 0 || n.x >= N || n.y >= N || visible.has(key(n))) continue
+      const seg = new THREE.Mesh(new THREE.PlaneGeometry(dx ? 0.05 : 1, dx ? 1 : 0.05), edgeMat)
+      seg.rotation.x = -Math.PI / 2
+      seg.position.set(c.x - HALF + dx * 0.5, 0.012, c.y - HALF + dy * 0.5)
+      scene.add(seg)
+    }
+  }
+
+  // ビル：すりガラスの箱＋光る輪郭＋段の線
+  for (const c of cells) {
+    const lv = level(c)
+    if (!lv) continue
+    const h = lv * LEVEL_H
+    const geo = new THREE.BoxGeometry(0.88, h, 0.88)
+    const glass = new THREE.MeshStandardMaterial({ color: 0x2a5b85, roughness: 0.2, metalness: 0.3, transparent: true, opacity: 0.78, emissive: 0x0c2a44 })
+    const b = new THREE.Mesh(geo, glass)
+    b.position.set(c.x - HALF, h / 2, c.y - HALF)
+    b.castShadow = b.receiveShadow = true
+    scene.add(b)
+    const e = new THREE.LineSegments(new THREE.EdgesGeometry(geo), new THREE.LineBasicMaterial({ color: 0x8fe6ff }))
+    e.position.copy(b.position)
+    scene.add(e)
+    for (let i = 1; i < lv; i++) {
+      const band = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.025, 0.9), new THREE.MeshBasicMaterial({ color: 0x5cc8f0 }))
+      band.position.set(c.x - HALF, i * LEVEL_H, c.y - HALF)
+      scene.add(band)
+    }
+    const top = new THREE.Mesh(new THREE.PlaneGeometry(0.88, 0.88), new THREE.MeshStandardMaterial({ color: 0x3d7bab, roughness: 0.4 }))
+    top.rotation.x = -Math.PI / 2
+    top.position.set(c.x - HALF, h + 0.003, c.y - HALF)
+    top.receiveShadow = true
+    scene.add(top)
+  }
+
+  // 札：クラスの字＋HPバー
+  const tag = (p: Piece) =>
+    canvas(256, 96, (g) => {
+      const col = hex(p.side === 0 ? ME : EN)
+      g.fillStyle = 'rgba(8,18,32,0.88)'
+      g.beginPath()
+      g.roundRect(4, 16, 248, 64, 32)
+      g.fill()
+      g.strokeStyle = col
+      g.lineWidth = 4
+      g.stroke()
+      g.fillStyle = col
+      g.beginPath()
+      g.arc(48, 48, 26, 0, Math.PI * 2)
+      g.fill()
+      g.fillStyle = '#ffffff'
+      g.font = '900 34px system-ui'
+      g.textAlign = 'center'
+      g.textBaseline = 'middle'
+      g.fillText(kanji(p.cls), 48, 50)
+      const max = DEFAULT_RULES.classes[p.cls].hp
+      g.fillStyle = 'rgba(255,255,255,0.15)'
+      g.beginPath()
+      g.roundRect(86, 38, 112, 20, 10)
+      g.fill()
+      g.fillStyle = p.hp / max > 0.5 ? col : '#ffc247'
+      g.beginPath()
+      g.roundRect(86, 38, Math.max(20, (112 * p.hp) / max), 20, 10)
+      g.fill()
+      g.fillStyle = '#e8f6ff'
+      g.font = '800 28px system-ui'
+      g.fillText(String(p.hp), 226, 50)
+    })
+
+  // 駒：陣営色の立体の人形。足元に光の輪と光だまり
+  const glowTex = canvas(128, 128, (g) => {
+    const gr = g.createRadialGradient(64, 64, 4, 64, 64, 64)
+    gr.addColorStop(0, 'rgba(255,255,255,0.9)')
+    gr.addColorStop(1, 'rgba(255,255,255,0)')
+    g.fillStyle = gr
+    g.fillRect(0, 0, 128, 128)
+  })
+  for (const p of pieces) {
+    const col = p.side === 0 ? ME : EN
+    const dark = p.side === 0 ? 0x1b5f8f : 0x8f2b22
+    const g = new THREE.Group()
+    g.position.copy(world(p.pos))
+    if (p.ghost) {
+      // 見失った敵：ワイヤーのホログラム
+      const wire = new THREE.MeshBasicMaterial({ color: col, wireframe: true, transparent: true, opacity: 0.45 })
+      const body = new THREE.Mesh(new THREE.CapsuleGeometry(0.12, 0.22, 4, 8), wire)
+      body.position.y = 0.3
+      const head = new THREE.Mesh(new THREE.SphereGeometry(0.1, 8, 6), wire)
+      head.position.y = 0.55
+      const ring = new THREE.Mesh(new THREE.RingGeometry(0.3, 0.34, 32), new THREE.MeshBasicMaterial({ color: col, transparent: true, opacity: 0.6, side: THREE.DoubleSide }))
+      ring.rotation.x = -Math.PI / 2
+      ring.position.y = 0.01
+      g.add(body, head, ring)
+      scene.add(g)
+      sprite(label(`? ${p.ghost}手前`, { font: '800 40px system-ui', fill: hex(col), bg: 'rgba(8,18,32,0.85)', w: 260 }), 0.7, 0.26, world(p.pos, 0.95))
+      continue
+    }
+    const plastic = (c: number, emissive = 0x000000) => new THREE.MeshStandardMaterial({ color: c, roughness: 0.35, metalness: 0.05, emissive, emissiveIntensity: 0.12 })
+    const pool = new THREE.Mesh(new THREE.PlaneGeometry(1.1, 1.1), new THREE.MeshBasicMaterial({ map: glowTex, color: col, transparent: true, opacity: 0.22, depthWrite: false, blending: THREE.AdditiveBlending }))
+    pool.rotation.x = -Math.PI / 2
+    pool.position.y = 0.006
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(0.3, 0.025, 8, 40), new THREE.MeshBasicMaterial({ color: col }))
+    ring.rotation.x = Math.PI / 2
+    ring.position.y = 0.05
+    const base = new THREE.Mesh(new THREE.CylinderGeometry(0.28, 0.3, 0.06, 32), plastic(0xe9f3fa))
+    base.position.y = 0.03
+    const body = new THREE.Mesh(new THREE.CapsuleGeometry(0.12, 0.22, 6, 16), plastic(col, col))
+    body.position.y = 0.3
+    const head = new THREE.Mesh(new THREE.SphereGeometry(0.1, 20, 14), plastic(0xf1d7bd))
+    head.position.y = 0.55
+    const helmet = new THREE.Mesh(new THREE.SphereGeometry(0.11, 20, 10, 0, Math.PI * 2, 0, Math.PI / 2), plastic(dark))
+    helmet.position.y = 0.57
+    g.add(pool, ring, base, body, head, helmet)
+    if (p.cls === 'sniper') {
+      const gun = new THREE.Mesh(new THREE.CylinderGeometry(0.015, 0.015, 0.55), plastic(0x24303d))
+      gun.rotation.z = Math.PI / 2.6
+      gun.position.set(0.1, 0.42, 0.08)
+      g.add(gun)
+    } else if (p.cls === 'gunner') {
+      const gun = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.08, 0.32), plastic(0x24303d))
+      gun.position.set(0.12, 0.33, 0.1)
+      g.add(gun)
+    } else if (p.cls === 'attacker') {
+      const blade = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.42, 0.06), plastic(0xdbe7f0, 0x99ddff))
+      blade.position.set(0.17, 0.42, 0)
+      blade.rotation.z = -0.3
+      g.add(blade)
+    } else if (p.cls === 'scout') {
+      const ant = new THREE.Mesh(new THREE.CylinderGeometry(0.008, 0.008, 0.35), plastic(0x24303d))
+      ant.position.set(-0.1, 0.6, -0.05)
+      const tip = new THREE.Mesh(new THREE.SphereGeometry(0.025, 8, 6), new THREE.MeshBasicMaterial({ color: col }))
+      tip.position.set(-0.1, 0.78, -0.05)
+      g.add(ant, tip)
+    }
+    g.traverse((o) => (o.castShadow = o !== pool))
+    g.rotation.y = p.side === 0 ? -Math.PI * 0.75 : Math.PI * 0.25
+    scene.add(g)
+    sprite(tag(p), 0.84, 0.32, world(p.pos, 1.0))
+  }
+
+  // 射線：光の筋＋照準＋命中率
+  const a = world(SHOOTER.pos, 0.45)
+  const b = world(TARGET.pos, 0.35)
+  const beam = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, a.distanceTo(b), 8), new THREE.MeshBasicMaterial({ color: 0xffffff }))
+  beam.position.copy(a).add(b).multiplyScalar(0.5)
+  beam.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), b.clone().sub(a).normalize())
+  scene.add(beam)
+  const halo = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, a.distanceTo(b), 8), new THREE.MeshBasicMaterial({ color: ME, transparent: true, opacity: 0.25 }))
+  halo.position.copy(beam.position)
+  halo.quaternion.copy(beam.quaternion)
+  scene.add(halo)
+  const ret = new THREE.Mesh(new THREE.RingGeometry(0.4, 0.46, 4, 1, Math.PI / 4), new THREE.MeshBasicMaterial({ color: 0xffd25a, side: THREE.DoubleSide }))
+  ret.rotation.x = -Math.PI / 2
+  ret.position.copy(world(TARGET.pos, 0.02))
+  scene.add(ret)
+  sprite(label(`命中 ${HIT}%`, { font: '900 46px system-ui', fill: '#0d1b2e', bg: '#ffd25a', w: 280 }), 0.8, 0.28, a.clone().lerp(b, 0.5).add(new THREE.Vector3(0, 0.38, 0)))
+
+  fitCamera(0.22, 0.9)
+  const composer = new EffectComposer(renderer)
+  composer.addPass(new RenderPass(scene, camera))
+  composer.addPass(new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 0.45, 0.35, 0.55))
+  composer.addPass(new OutputPass())
+  return () => composer.render()
+}
+
+const render = { holo, holo2, diorama, paper }[themeId as 'holo']?.() ?? holo()
+// ?zoom=2 で寄った画（駒の見え方の確認用）
+const zoomQ = Number(new URLSearchParams(location.search).get('zoom') ?? 1)
+if (zoomQ > 1) {
+  camera.zoom = zoomQ
+  camera.updateProjectionMatrix()
+}
 render()
 ;(window as unknown as { ready: boolean }).ready = true

@@ -4,7 +4,7 @@
  *
  *   node sim/sightlines.ts [--cls sniper] [--map city9]
  */
-import { attackRange, canSee, canStrike } from '../src/engine/game.ts'
+import { attackRange, canSee, canStrike, isMeleeClass } from '../src/engine/game.ts'
 import { allPositions, key, terrainId } from '../src/engine/grid.ts'
 import { MAPS } from '../src/engine/maps.ts'
 import { DEFAULT_RULES } from '../src/engine/rules.ts'
@@ -49,7 +49,7 @@ for (const map of maps) {
   const turns = turnsFrom(map, map.spawns[0], rules.classes[cls].move)
   const rows = cells.map((at) => {
     const range = attackRange(map, rules, cls, at)
-    const strike = cells.filter((t) => (t.x !== at.x || t.y !== at.y) && canStrike(map, rules, at, t, range)).length
+    const strike = cells.filter((t) => (t.x !== at.x || t.y !== at.y) && canStrike(map, rules, at, t, range, isMeleeClass(rules, cls))).length
     const see = cells.filter((t) => (t.x !== at.x || t.y !== at.y) && canSee(map, rules, cls, at, t)).length
     return { at, roof: terrainId(map, at) === 'building', strike, see, turns: turns.get(key(at))! }
   })

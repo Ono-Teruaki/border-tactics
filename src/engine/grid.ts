@@ -78,3 +78,40 @@ export function allPositions(map: MapDef): Pos[] {
   for (let y = 0; y < map.height; y++) for (let x = 0; x < map.width; x++) out.push({ x, y })
   return out
 }
+
+/**
+ * from → to の最短経路（地形コスト）。移動自体は瞬間移動だが、再生の演出で通り道を見せるのに使う。
+ * 同じコストなら、向きを変えない経路を選ぶ（見た目が自然になる）
+ */
+export function shortestPath(map: MapDef, rules: RulesConfig, from: Pos, to: Pos): Pos[] {
+  const DIRS = [[1, 0], [-1, 0], [0, 1], [0, -1]]
+  const best = new Map<string, { cost: number; turns: number; prev: Pos | null; dir: number }>()
+  best.set(key(from), { cost: 0, turns: 0, prev: null, dir: -1 })
+  const queue: Pos[] = [from]
+  while (queue.length) {
+    queue.sort((p, q) => {
+      const a = best.get(key(p))!
+      const b = best.get(key(q))!
+      return a.cost - b.cost || a.turns - b.turns
+    })
+    const cur = queue.shift()!
+    if (samePos(cur, to)) break
+    const c = best.get(key(cur))!
+    DIRS.forEach(([ox, oy], d) => {
+      const np = { x: cur.x + ox, y: cur.y + oy }
+      if (!inBounds(map, np)) return
+      const t = terrain(map, rules, np)
+      if (!t.passable) return
+      const nc = c.cost + t.moveCost
+      const nt = c.turns + (c.dir >= 0 && c.dir !== d ? 1 : 0)
+      const prev = best.get(key(np))
+      if (prev && (prev.cost < nc || (prev.cost === nc && prev.turns <= nt))) return
+      best.set(key(np), { cost: nc, turns: nt, prev: cur, dir: d })
+      queue.push(np)
+    })
+  }
+  if (!best.has(key(to))) return [from, to]
+  const path: Pos[] = []
+  for (let p: Pos | null = to; p; p = best.get(key(p))!.prev) path.unshift(p)
+  return path
+}

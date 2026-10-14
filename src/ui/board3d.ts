@@ -348,6 +348,46 @@ export class Board3D {
     })
   }
 
+  /** 駒の透明度（視界に出入りする演出用）。次の syncPieces で元に戻る */
+  setPieceOpacity(id: string, op: number) {
+    const g = this.pieces.get(id)
+    if (g) this.setOpacity(g, op)
+  }
+
+  private setOpacity(g: THREE.Group, op: number) {
+    const { body, band, tag } = g.userData as { body: THREE.Mesh; band: THREE.Mesh; tag: THREE.Sprite }
+    ;(body.material as THREE.MeshStandardMaterial).opacity = op
+    ;(band.material as THREE.MeshBasicMaterial).opacity = op
+    tag.material.opacity = op
+    body.castShadow = op > 0.5
+    this.requestRender()
+  }
+
+  /**
+   * マスの経路に沿って移動する（1マスごとに小さく跳ねる）。
+   * fadeIn は最初の1マスで現れ（視界に入る）、fadeOut は最後の1マスで消える（視界から出る）
+   */
+  movePath(id: string, path: Pos[], opt: { fadeIn?: boolean; fadeOut?: boolean } = {}): Promise<void> {
+    const g = this.pieces.get(id)
+    if (!g || path.length < 2) return Promise.resolve()
+    const pts = path.map((p) => this.world(p))
+    const n = pts.length - 1
+    ;(g.userData.body as THREE.Mesh).userData.tile = path[n]
+    return this.tween(220 + 170 * n, (t) => {
+      const e = t < 0.5 ? 2 * t * t : 1 - (-2 * t + 2) ** 2 / 2
+      const f = e * n
+      const i = Math.min(n - 1, Math.floor(f))
+      const u = f - i
+      g.position.lerpVectors(pts[i], pts[i + 1], u)
+      // 段差は早めに上り下りし、1マスごとに小さく跳ねる
+      g.position.y = THREE.MathUtils.lerp(pts[i].y, pts[i + 1].y, Math.min(1, u * 1.6)) + Math.sin(Math.PI * u) * 0.18
+      let op = 1
+      if (opt.fadeIn) op = Math.min(op, f)
+      if (opt.fadeOut) op = Math.min(op, n - f)
+      this.setOpacity(g, Math.max(0, Math.min(1, op)))
+    })
+  }
+
   /** 移動しようとして弾かれる（干渉マスの手前まで進んで戻る） */
   bouncePiece(id: string, toward: Pos, dur = 700): Promise<void> {
     const g = this.pieces.get(id)
