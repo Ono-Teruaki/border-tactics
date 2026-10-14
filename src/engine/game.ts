@@ -11,7 +11,7 @@ export function createGame(map: MapDef, rules: RulesConfig, comps: [string[], st
     comp.forEach((cls, i) => {
       const c = rules.classes[cls]
       if (!c) throw new Error(`unknown class ${cls}`)
-      units.push({ id: `${side}-${i}`, side, cls, pos: { ...map.spawns[side][i] }, hp: c.hp, alive: true, markedUntil: 0, suppressedUntil: 0, markCooldownUntil: 0 })
+      units.push({ id: `${side}-${i}`, side, cls, pos: { ...map.spawns[side][i] }, hp: c.hp, alive: true, markedUntil: 0, suppressedUntil: 0, markCooldownUntil: 0, stealthUntil: 0 })
     })
   }
   const state: GameState = { map, rules, units, turn: 1, kills: [0, 0], killCost: [0, 0], intel: [{}, {}], over: false, history: [] }
@@ -41,15 +41,20 @@ export function visionRange(map: MapDef, rules: RulesConfig, cls: string, at: Po
  * - 視界距離・視線（ビル）
  * - 死角: 屋上からでも、ビルの裏側に張り付いた地上のマスは見えない
  */
-export function canSee(map: MapDef, rules: RulesConfig, cls: string, at: Pos, target: Pos): boolean {
+export function canSee(map: MapDef, rules: RulesConfig, cls: string, at: Pos, target: Pos, stealth = 0): boolean {
   const d = dist(at, target)
   const c = rules.classes[cls]
   if (c.sonar > 0 && d <= c.sonar) return true
-  if (d > visionRange(map, rules, cls, at)) return false
+  if (d > visionRange(map, rules, cls, at) - stealth) return false
   const fromRoof = terrainId(map, at) === 'building'
   if (!lineOfSight(map, rules, at, target, terrain(map, rules, at).seesOverBlockers)) return false
   if (rules.vision.deadZone && fromRoof && d > 1 && isWallHugging(map, at, target)) return false
   return true
+}
+
+/** 隠密中のユニットを見つけられる距離の減り幅 */
+export function stealthOf(rules: RulesConfig, u: Unit, atTurn: number): number {
+  return u.stealthUntil >= atTurn ? rules.classes[u.cls].stealth : 0
 }
 
 /** 近接クラス（素の射程が1）。隣接した相手への攻撃は、射撃ではなく近接攻撃になる */
@@ -92,7 +97,7 @@ export function visibleEnemyIds(state: GameState, side: Side, atTurn = state.tur
   const out = new Set<string>()
   for (const e of state.units) {
     if (!e.alive || e.side === side) continue
-    if (e.markedUntil >= atTurn || mine.some((m) => canSee(map, rules, m.cls, m.pos, e.pos))) out.add(e.id)
+    if (e.markedUntil >= atTurn || mine.some((m) => canSee(map, rules, m.cls, m.pos, e.pos, stealthOf(rules, e, atTurn)))) out.add(e.id)
   }
   return out
 }
@@ -228,13 +233,22 @@ export function resolveTurn(state: GameState, orders: [Order[], Order[]], rng: R
     for (const u of alive) if (contact.has(u.id)) reveal(state, (1 - u.side) as Side, u, T)
   }
 
+  // --- 隠密: 条件を満たしたユニットは、この手と次の手、見つかりにくい ---
+  for (const u of alive) {
+    const c = classOf(rules, u)
+    if (c.stealth <= 0) continue
+    const fromRoof = terrainId(map, origin.get(u.id)!) === 'building'
+    const onGround = terrainId(map, u.pos) !== 'building'
+    if (rules.skills.stealthTrigger === 'descend' ? fromRoof && onGround : supporting(u)) u.stealthUntil = T + 1
+  }
+
   // --- 観測: スカウトが視界内の敵にマーク ---
   const sk = rules.skills
   for (const u of alive) {
     const c = classOf(rules, u)
     if (!c.markOnSight || u.markCooldownUntil >= T) continue
     const seen = alive
-      .filter((e) => e.side !== u.side && canSee(map, rules, u.cls, u.pos, e.pos))
+      .filter((e) => e.side !== u.side && canSee(map, rules, u.cls, u.pos, e.pos, stealthOf(rules, e, T)))
       .sort((a, b) => dist(u.pos, a.pos) - dist(u.pos, b.pos))
       .slice(0, sk.markPerTurn)
     if (!seen.length) continue
@@ -330,6 +344,29 @@ export function resolveTurn(state: GameState, orders: [Order[], Order[]], rng: R
       defeat(state, g, events)
     }
     if (t.hp <= 0) defeat(state, t, events)
+  }
+
+  // --- 後送: 衛生兵が、移動前に隣にいた傷ついた味方を自分の隣へ引っ張ってくる ---
+  for (const u of alive) {
+    const c = classOf(rules, u)
+    if (!u.alive || !c.evac || !supporting(u)) continue
+    const ally = alive
+      .filter((a) => a.alive && a.side === u.side && a.id !== u.id && a.hp < classOf(rules, a).hp && chebyshev(origin.get(a.id)!, origin.get(u.id)!) <= 1)
+      .sort((a, b) => classOf(rules, b).hp - b.hp - (classOf(rules, a).hp - a.hp))[0]
+    if (!ally || chebyshev(ally.pos, u.pos) <= 1) continue
+    const enemies = state.units.filter((e) => e.alive && e.side !== u.side)
+    const taken = new Set(state.units.filter((x) => x.alive && x.id !== ally.id).map((x) => key(x.pos)))
+    const spots: Pos[] = []
+    for (let dy = -1; dy <= 1; dy++)
+      for (let dx = -1; dx <= 1; dx++) {
+        const p = { x: u.pos.x + dx, y: u.pos.y + dy }
+        if ((dx || dy) && inBounds(map, p) && terrain(map, rules, p).passable && !taken.has(key(p))) spots.push(p)
+      }
+    if (!spots.length) continue
+    const safety = (p: Pos) => (enemies.length ? Math.min(...enemies.map((e) => dist(p, e.pos))) : 0)
+    spots.sort((a, b) => safety(b) - safety(a) || dist(a, ally.pos) - dist(b, ally.pos))
+    events.push({ type: 'evac', unitId: u.id, allyId: ally.id, from: { ...ally.pos }, to: { ...spots[0] } })
+    ally.pos = { ...spots[0] }
   }
 
   // --- 支援: 衛生兵の回復 ---

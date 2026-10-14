@@ -44,6 +44,13 @@ export interface UnitClass {
   guardReduce: number
   /** 貫通: 相手の守をこの値だけ無視する（formula = 'armor' のときだけ効く） */
   pen: number
+  /**
+   * 後送（衛生兵）: 支援の手、移動前に隣にいた味方のうち一番傷の深い1体を、交戦の後で
+   * 自分の移動先の隣（敵から一番遠い空きマス）へ引っ張ってくる。そのあと通常どおり回復する
+   */
+  evac: boolean
+  /** 隠密: 条件（skills.stealthTrigger）を満たした手と次の手、敵がこのユニットを見つけられる距離をこの値だけ下げる（透視は別） */
+  stealth: number
   move: number
   range: number
   vision: number
@@ -120,6 +127,8 @@ export interface RulesConfig {
     guardSameHeight: boolean
     /** 同じクラスを編成できる上限 */
     maxPerClass: number
+    /** 隠密になる条件: descend = 屋上から地上へ降りた手 / noAttack = 狙いを指定しなかった手 */
+    stealthTrigger: 'descend' | 'noAttack'
   }
   vision: {
     /** 屋上から見ても、ビルの裏側に張り付いた地上のマスは見えない */
@@ -154,6 +163,8 @@ export interface Unit {
   suppressedUntil: number
   /** この手まで観測スキルが使えない */
   markCooldownUntil: number
+  /** この手まで隠密 */
+  stealthUntil: number
 }
 
 /** 命令: 移動先と、狙う敵（任意）。移動後に射程・射線が通り、見えていれば撃つ */
@@ -211,6 +222,8 @@ export type GameEvent =
   | { type: 'suppress'; unitId: string; targetId: string }
   | { type: 'heal'; unitId: string; targets: { id: string; amount: number }[] }
   | { type: 'pursuit'; unitId: string; from: Pos; to: Pos }
+  /** 後送: 衛生兵 unitId が味方 allyId を from から to へ引っ張ってきた */
+  | { type: 'evac'; unitId: string; allyId: string; from: Pos; to: Pos }
 
 export interface GameState {
   map: MapDef

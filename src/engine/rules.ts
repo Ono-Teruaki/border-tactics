@@ -3,7 +3,7 @@ import type { RulesConfig, UnitClass } from './types.ts'
 type ClassBase = Pick<UnitClass, 'id' | 'name' | 'kanji' | 'short' | 'hp' | 'atk' | 'def' | 'spd' | 'shots' | 'accuracy' | 'falloff' | 'move' | 'range' | 'vision' | 'cost'>
 /** スキル系の項目は既定値（なし）で埋める */
 function cls(c: ClassBase & Partial<UnitClass>): UnitClass {
-  return { attackMaxMove: 99, closePenalty: 0, pursuit: false, markOnSight: false, sonar: 0, suppress: false, steadyAim: false, heal: 0, healRange: 1, guardReduce: 0, pen: 0, ...c }
+  return { attackMaxMove: 99, closePenalty: 0, pursuit: false, markOnSight: false, sonar: 0, suppress: false, steadyAim: false, heal: 0, healRange: 1, guardReduce: 0, pen: 0, evac: false, stealth: 0, ...c }
 }
 
 /** ルールとユニット性能はすべてここ。シミュレーションでは差分を上書きして比較する */
@@ -25,7 +25,7 @@ export const DEFAULT_RULES: RulesConfig = {
   },
   sharedTargeting: true,
   cover: { fireOverBuildings: false, wallHug: true },
-  skills: { markDuration: 1, markAccBonus: 10, markPerTurn: 99, markCooldown: 0, suppressMove: 1, suppressAcc: 15, steadyAcc: 15, guardHitsPerTurn: 99, guardSameHeight: true, maxPerClass: 2 },
+  skills: { markDuration: 1, markAccBonus: 10, markPerTurn: 99, markCooldown: 0, suppressMove: 1, suppressAcc: 15, steadyAcc: 15, guardHitsPerTurn: 99, guardSameHeight: true, maxPerClass: 2, stealthTrigger: 'descend' },
   vision: { deadZone: true },
   combat: { variance: 0.15, damageScale: 1, formula: 'ratio', armorK: 20, coverHalf: 25, coverLight: 12, highGround: 10, lowGround: 10, minHit: 5, maxHit: 99, initiativeJitter: 2 },
   attackReveals: true,

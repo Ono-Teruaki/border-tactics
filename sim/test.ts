@@ -1,6 +1,6 @@
 // ルール仕様テスト: node sim/test.ts
 import assert from 'node:assert/strict'
-import { createGame, gameResult, moveOf, observe, resolveTurn, visibleEnemyIds } from '../src/engine/game.ts'
+import { chebyshev, createGame, gameResult, moveOf, observe, resolveTurn, visibleEnemyIds } from '../src/engine/game.ts'
 import { DEFAULT_RULES, mergeRules } from '../src/engine/rules.ts'
 import { createRng, seedStreams } from '../src/engine/rng.ts'
 import { replayRecord, type GameRecord } from '../src/engine/record.ts'
@@ -207,6 +207,27 @@ const tests: Record<string, () => void> = {
     const ev = resolveTurn(g, [stay(g, 0, '1-0'), stay(g, 1)], createRng(1))
     assert.ok(!ev.some((e) => e.type === 'noshot'))
     assert.ok(unit(g, '1-0').hp < hp0)
+  },
+  '後送: 衛生兵は移動前に隣にいた傷ついた味方を、交戦の後で自分の隣へ連れ戻す'() {
+    const r = mergeRules(rules2, { classes: { medic: { evac: true } } })
+    const g = createGame(mapOf(open, [{ x: 2, y: 2 }, { x: 3, y: 2 }], [{ x: 6, y: 0 }, { x: 6, y: 4 }]), r, [['medic', 'attacker'], ['gunner', 'gunner']])
+    unit(g, '0-1').hp = 10
+    const ev = resolveTurn(g, [[mv('0-0', 0, 2), mv('0-1', 3, 2)], stay(g, 1)], createRng(1))
+    const e = ev.find((x) => x.type === 'evac')
+    assert.ok(e && e.type === 'evac' && e.allyId === '0-1')
+    assert.ok(chebyshev(unit(g, '0-1').pos, unit(g, '0-0').pos) <= 1)
+    assert.ok(unit(g, '0-1').hp > 10)
+  },
+  '隠密: 屋上から降りた手は、敵から見つかる距離が下がる'() {
+    const m = mapOf(['.#.....', '.......'], [{ x: 1, y: 0 }], [{ x: 6, y: 1 }])
+    const base = mergeRules(rules1, { classes: { scout: { sonar: 0 }, gunner: { vision: 5 } } })
+    const seen = (r: typeof base) => {
+      const g = createGame(m, r, [['scout'], ['gunner']])
+      resolveTurn(g, [[mv('0-0', 1, 1)], stay(g, 1)], createRng(1))
+      return visibleEnemyIds(g, 1).has('0-0')
+    }
+    assert.equal(seen(base), true)
+    assert.equal(seen(mergeRules(base, { classes: { scout: { stealth: 3 } } })), false)
   },
   '屋上の見通しはルールで切れる'() {
     const m = mapOf(['.........', '.#..#....', '.........'], [{ x: 1, y: 1 }], [{ x: 7, y: 1 }])

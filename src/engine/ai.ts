@@ -170,6 +170,18 @@ function supportValue(ctx: Ctx, u: Unit, pos: Pos): { value: number } {
     if (c.guardReduce > 0 && chebyshev(ap, pos) <= 1 && (!rules.skills.guardSameHeight || terrainId(ctx.obs.map, ap) === terrainId(ctx.obs.map, pos)))
       value += threatAt(ctx, ac, a.hp, ap) * 0.5
   }
+  // 後送: 今隣にいる一番傷の深い味方を、pos の隣（より安全な場所）へ連れ戻して回復する
+  if (c.evac) {
+    const hurt = ctx.obs.mine
+      .filter((a) => a.id !== u.id && chebyshev(a.pos, u.pos) <= 1 && a.hp < classOf(rules, a).hp)
+      .sort((a, b) => classOf(rules, b).hp - b.hp - (classOf(rules, a).hp - a.hp))[0]
+    if (hurt) {
+      const hc = classOf(rules, hurt)
+      const ap = ctx.planned.get(hurt.id) ?? hurt.pos
+      if (chebyshev(ap, pos) > c.healRange) value += (Math.min(c.heal, hc.hp - hurt.hp) / 10) * 1.2
+      value += Math.max(0, threatAt(ctx, hc, hurt.hp, ap) - threatAt(ctx, hc, hurt.hp, pos)) * 0.6
+    }
+  }
   return { value }
 }
 
