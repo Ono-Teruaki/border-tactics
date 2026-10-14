@@ -136,6 +136,8 @@ export interface RulesConfig {
     guardSameHeight: boolean
     /** 同じクラスを編成できる上限 */
     maxPerClass: number
+    /** 観測（マーク）の発動: always = 毎手 / climb = 地上から屋上へ登った手だけ */
+    markTrigger: 'always' | 'climb'
     /** 隠密になる条件: descend = 屋上から地上へ降りた手 / noAttack = 狙いを指定しなかった手 */
     stealthTrigger: 'descend' | 'noAttack'
     /** 妨害の効果: 視界の低下、命中率の低下（%）、持続（手。1 = 次の手の終わりまで） */

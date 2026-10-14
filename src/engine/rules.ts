@@ -26,7 +26,7 @@ export const DEFAULT_RULES: RulesConfig = {
   },
   sharedTargeting: true,
   cover: { fireOverBuildings: false, wallHug: true },
-  skills: { markDuration: 1, markAccBonus: 10, markPerTurn: 99, markCooldown: 0, suppressMove: 1, suppressAcc: 15, steadyAcc: 15, guardHitsPerTurn: 99, guardSameHeight: true, maxPerClass: 2, stealthTrigger: 'descend', jamVision: 2, jamAcc: 20, jamDuration: 1 },
+  skills: { markDuration: 1, markAccBonus: 10, markPerTurn: 99, markCooldown: 0, suppressMove: 1, suppressAcc: 15, steadyAcc: 15, guardHitsPerTurn: 99, guardSameHeight: true, maxPerClass: 2, markTrigger: 'climb', stealthTrigger: 'descend', jamVision: 2, jamAcc: 20, jamDuration: 1 },
   vision: { deadZone: true },
   combat: { variance: 0.15, damageScale: 1, formula: 'ratio', armorK: 20, coverModel: 'exposure', coverMax: 40, coverHalf: 25, coverLight: 12, highGround: 10, lowGround: 10, minHit: 5, maxHit: 99, initiativeJitter: 2 },
   attackReveals: true,
