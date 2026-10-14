@@ -67,17 +67,19 @@ export const isMeleeClass = (rules: RulesConfig, cls: string) => rules.classes[c
  *   他のビルに張り付いている敵は撃てる（命中率の遮蔽がかかる）。
  *   これは射撃だけの制限で、近接クラスが隣接した敵を攻撃するときはかからない
  */
-export function strikeCheck(map: MapDef, rules: RulesConfig, at: Pos, target: Pos, range: number, melee = false): StrikeBlock | null {
+export function strikeCheck(map: MapDef, rules: RulesConfig, at: Pos, target: Pos, range: number, melee = false, arc = false): StrikeBlock | null {
   const d = dist(at, target)
   if (d > range) return 'range'
+  // 曲射は、射線上のビルも張り付きも越えて届く
+  if (arc) return null
   const fromRoof = terrainId(map, at) === 'building'
   if (!lineOfSight(map, rules, at, target, fromRoof && rules.cover.fireOverBuildings)) return 'blocked'
   if (rules.cover.wallHug && fromRoof && !melee && d === 1 && terrainId(map, target) !== 'building') return 'cover'
   return null
 }
 
-export function canStrike(map: MapDef, rules: RulesConfig, at: Pos, target: Pos, range: number, melee = false): boolean {
-  return strikeCheck(map, rules, at, target, range, melee) === null
+export function canStrike(map: MapDef, rules: RulesConfig, at: Pos, target: Pos, range: number, melee = false, arc = false): boolean {
+  return strikeCheck(map, rules, at, target, range, melee, arc) === null
 }
 
 /** target（地上）が、撃ち手 from の方向に面したビルに張り付いているか（主方向の隣接マスがビル） */
@@ -288,7 +290,7 @@ export function resolveTurn(state: GameState, orders: [Order[], Order[]], rng: R
     else if (!t || !t.alive) reason = 'gone'
     else if (dist(origin.get(u.id)!, u.pos) > cls.attackMaxMove) reason = 'moved'
     else if (!(rules.sharedTargeting ? teamVis[u.side].has(t.id) : canSee(map, rules, u.cls, u.pos, t.pos))) reason = 'unseen'
-    else reason = strikeCheck(map, rules, u.pos, t.pos, attackRange(map, rules, u.cls, u.pos), isMeleeClass(rules, u.cls))
+    else reason = strikeCheck(map, rules, u.pos, t.pos, attackRange(map, rules, u.cls, u.pos), isMeleeClass(rules, u.cls), cls.arc)
     if (reason || !t) {
       events.push({ type: 'noshot', unitId: u.id, targetId, reason: reason ?? 'gone' })
       continue
@@ -308,8 +310,8 @@ export function resolveTurn(state: GameState, orders: [Order[], Order[]], rng: R
         shots.push({ hit, damage: 0 })
         continue
       }
-      // カバーリング: 支援中の防護兵が周囲8マスにいれば肩代わり
-      const guard = alive
+      // カバーリング: 支援中の防護兵が周囲8マスにいれば肩代わり（爆発は庇えない）
+      const guard = !cls.blast && alive
         .filter(
           (g) =>
             g.alive &&
@@ -337,6 +339,18 @@ export function resolveTurn(state: GameState, orders: [Order[], Order[]], rng: R
     }
     const direct = shots.filter((x) => x.hit && !x.guardedBy)
     const total = direct.reduce((a, x) => a + x.damage, 0)
+    // 爆風: 命中したら、狙った敵の上下左右にいる敵にもダメージ
+    let splash: { id: string; damage: number; hp: number }[] | undefined
+    if (cls.blast > 0 && direct.length) {
+      splash = []
+      for (const o of alive) {
+        if (!o.alive || o.side === u.side || o.id === t.id || Math.abs(o.pos.x - t.pos.x) + Math.abs(o.pos.y - t.pos.y) !== 1) continue
+        const dmg = Math.max(1, Math.round(rollDamage(rules, cls.atk, classOf(rules, o).def, rng, cls.pen) * cls.blast))
+        o.hp -= dmg
+        splash.push({ id: o.id, damage: dmg, hp: Math.max(0, o.hp) })
+        if (o.hp <= 0) downed.push(o), (o.alive = false)
+      }
+    }
     events.push({
       type: 'attack',
       unitId: u.id,
@@ -349,6 +363,7 @@ export function resolveTurn(state: GameState, orders: [Order[], Order[]], rng: R
       damage: total,
       targetHp: Math.max(0, t.hp),
       spotted: !canSee(map, rules, u.cls, u.pos, t.pos),
+      ...(splash?.length ? { splash } : {}),
     })
     attackers.push(u)
     if (cls.suppress && shots.filter((x) => x.hit).length >= 2 && t.hp > 0) {

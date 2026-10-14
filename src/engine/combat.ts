@@ -96,7 +96,10 @@ export function hitChance(map: MapDef, rules: RulesConfig, cls: UnitClass, from:
   const coverMul = steady ? 0.5 : 1
   let cover: CoverLevel
   let coverPenalty = 0
-  if (c.coverModel === 'exposure') {
+  if (cls.arc) {
+    // 曲射は遮蔽を無視する
+    cover = 'none'
+  } else if (c.coverModel === 'exposure') {
     // 隠れている割合に比例して下げる
     const hidden = hiddenFraction(map, from, target)
     coverPenalty = Math.round(c.coverMax * hidden * coverMul)
