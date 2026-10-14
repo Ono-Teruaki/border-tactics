@@ -229,7 +229,7 @@ const tests: Record<string, () => void> = {
     assert.equal(strikeCheck(m, DEFAULT_RULES, { x: 1, y: 0 }, { x: 5, y: 0 }, 4), 'blocked')
     assert.equal(strikeCheck(m, DEFAULT_RULES, { x: 1, y: 0 }, { x: 5, y: 0 }, 4, false, true), null)
     // 爆風: 狙った敵(4,1)の上(4,0)の敵にも 60%。斜め(5,2)は巻き込まない
-    const g = createGame(mapOf(open, [{ x: 0, y: 1 }, { x: 0, y: 2 }, { x: 0, y: 3 }], [{ x: 6, y: 1 }, { x: 6, y: 2 }, { x: 6, y: 3 }]), mergeRules(DET, { teamSize: 3 }), [['grenadier', 'scout', 'scout'], ['scout', 'gunner', 'gunner']])
+    const g = createGame(mapOf(open, [{ x: 0, y: 1 }, { x: 0, y: 2 }, { x: 0, y: 3 }], [{ x: 6, y: 1 }, { x: 6, y: 2 }, { x: 6, y: 3 }]), mergeRules(DET, { teamSize: 3, skills: { arcGround: false }, classes: { grenadier: { atk: 12 } } as any }), [['grenadier', 'scout', 'scout'], ['scout', 'gunner', 'gunner']])
     unit(g, '0-0').pos = { x: 1, y: 1 }
     unit(g, '1-0').pos = { x: 4, y: 1 }
     unit(g, '1-1').pos = { x: 4, y: 0 }
@@ -274,6 +274,28 @@ const tests: Record<string, () => void> = {
     unit(g2, '1-0').pos = { x: 6, y: 6 }
     resolveTurn(g2, [[mv('0-0', 1, 1)], stay(g2, 1)], createRng(1))
     assert.ok(!visibleEnemyIds(g2, 0).has('1-0'))
+  },
+  '擲弾兵はマスを狙う。命中判定なしでそのマスに落ち、敵が動けば外れる'() {
+    const m = mapOf(['...#...', '.......', '.......'], [{ x: 1, y: 0 }, { x: 0, y: 2 }], [{ x: 5, y: 0 }, { x: 6, y: 2 }])
+    // 命中率の上下限を外しても（minHit 0）当たる＝命中判定がない
+    const R2 = mergeRules(rules2, { combat: { minHit: 0, maxHit: 0 }, classes: { grenadier: { atk: 12 } } as any })
+    const g = createGame(m, R2, [['grenadier', 'scout'], ['gunner', 'gunner']])
+    unit(g, '1-1').pos = { x: 5, y: 1 }
+    // ビル越しに (5,0) へ撃ち込む。(5,0) に直撃、真下の (5,1) に爆風
+    let ev = resolveTurn(g, [[{ unitId: '0-0', dest: { x: 1, y: 0 }, targetPos: { x: 5, y: 0 } }, mv('0-1', 0, 2)], stay(g, 1)], createRng(1))
+    const b = ev.find((e) => e.type === 'bombard')
+    assert.ok(b && b.type === 'bombard')
+    assert.deepEqual(b.hits.map((x) => [x.id, x.direct]), [['1-0', true], ['1-1', false]])
+    assert.equal(unit(g, '1-0').hp, 22 - 7) // round(12²/(12+8)) = 7
+    // 敵が動けば外れる
+    const hp = unit(g, '1-0').hp
+    ev = resolveTurn(g, [[{ unitId: '0-0', dest: { x: 1, y: 0 }, targetPos: { x: 5, y: 0 } }, mv('0-1', 0, 2)], [mv('1-0', 6, 1), mv('1-1', 6, 2)]], createRng(1))
+    const b2 = ev.find((e) => e.type === 'bombard')
+    assert.ok(b2 && b2.type === 'bombard' && b2.hits.length === 0)
+    assert.equal(unit(g, '1-0').hp, hp)
+    // 射程外のマスは撃てない
+    ev = resolveTurn(g, [[{ unitId: '0-0', dest: { x: 0, y: 0 }, targetPos: { x: 6, y: 2 } }, mv('0-1', 0, 2)], stay(g, 1)], createRng(1))
+    assert.ok(ev.some((e) => e.type === 'noshot' && e.unitId === '0-0' && e.reason === 'range'))
   },
   '張り付きの制限は射撃だけ。近接クラスは屋上から真下の敵を攻撃できる'() {
     const m = mapOf(['.#.....', '.......'], [{ x: 1, y: 0 }], [{ x: 2, y: 0 }])

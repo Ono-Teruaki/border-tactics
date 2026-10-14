@@ -200,7 +200,9 @@ export function resolveTurn(state: GameState, orders: [Order[], Order[]], rng: R
   const events: GameEvent[] = []
   const alive = state.units.filter((u) => u.alive)
   const orderOf = (u: Unit) => orders[u.side].find((x) => x.unitId === u.id)
-  const supporting = (u: Unit) => !orderOf(u)?.target
+  const supporting = (u: Unit) => !orderOf(u)?.target && !orderOf(u)?.targetPos
+  // 曲射でマスを狙う手（擲弾兵）
+  const groundFire = (u: Unit) => rules.skills.arcGround && classOf(rules, u).arc && !!orderOf(u)?.targetPos
   const origin = new Map<string, Pos>()
   const proposed = new Map<string, Pos>()
   for (const u of alive) {
@@ -300,11 +302,44 @@ export function resolveTurn(state: GameState, orders: [Order[], Order[]], rng: R
   const attackers: Unit[] = []
   const guardUsed = new Map<string, number>()
   const queue = alive
-    .map((u) => ({ u, targetId: orderOf(u)?.target, init: classOf(rules, u).spd + rng.next() * rules.combat.initiativeJitter }))
-    .filter((q): q is { u: Unit; targetId: string; init: number } => !!q.targetId)
+    .map((u) => ({ u, targetId: groundFire(u) ? '' : orderOf(u)?.target, init: classOf(rules, u).spd + rng.next() * rules.combat.initiativeJitter }))
+    .filter((q): q is { u: Unit; targetId: string; init: number } => q.targetId !== undefined)
     .sort((a, b) => b.init - a.init)
   for (const { u, targetId } of queue) {
     const cls = skillClass(rules, u, T)
+    // 曲射（マス狙い）: 命中判定なし。狙ったマスに落ち、そこと爆風の範囲にいる敵に当たる
+    if (groundFire(u)) {
+      const at = orderOf(u)!.targetPos!
+      let reason: StrikeBlock | null = null
+      if (!u.alive) reason = 'down'
+      else if (dist(origin.get(u.id)!, u.pos) > cls.attackMaxMove) reason = 'moved'
+      else if (dist(u.pos, at) > attackRange(map, rules, u.cls, u.pos)) reason = 'range'
+      // 妨害で曲射を封じられていたら、普通の射線が要る
+      else if (!cls.arc && !lineOfSight(map, rules, u.pos, at, terrainId(map, u.pos) === 'building' && rules.cover.fireOverBuildings)) reason = 'blocked'
+      if (reason) {
+        events.push({ type: 'noshot', unitId: u.id, targetId: '', reason })
+        continue
+      }
+      const hits: { id: string; damage: number; hp: number; direct: boolean }[] = []
+      const downed: Unit[] = []
+      for (const o of alive) {
+        if (!o.alive || o.side === u.side) continue
+        const direct = samePos(o.pos, at)
+        if (!direct && !(cls.blast > 0 && inBlast(rules, at, o.pos))) continue
+        const raw = rollDamage(rules, cls.atk, classOf(rules, o).def, rng, cls.pen)
+        const dmg = direct ? raw : Math.max(1, Math.round(raw * cls.blast))
+        o.hp -= dmg
+        hits.push({ id: o.id, damage: dmg, hp: Math.max(0, o.hp), direct })
+        if (o.hp <= 0) downed.push(o), (o.alive = false)
+      }
+      events.push({ type: 'bombard', unitId: u.id, from: { ...u.pos }, at: { ...at }, hits })
+      attackers.push(u)
+      for (const o of downed) {
+        o.alive = true
+        defeat(state, o, events)
+      }
+      continue
+    }
     const t = state.units.find((e) => e.id === targetId && e.side !== u.side)
     let reason: StrikeBlock | null = null
     if (!u.alive) reason = 'down'

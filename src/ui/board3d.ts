@@ -560,6 +560,16 @@ export class Board3D {
     return fly
   }
 
+  /** 曲射のマス狙い: 山なりに飛んで、狙ったマスで爆発する（当たった敵の表示は呼び出し側） */
+  async shell(from: Pos, at: Pos, side: 0 | 1, hit: boolean): Promise<void> {
+    const color = side === 0 ? C.me : C.en
+    const a = this.world(from, 0.5)
+    const b = this.world(at, 0.15)
+    await this.tracer(a, b, color, 520 + a.distanceTo(b) * 60, true)
+    this.burstAt(b.clone().setY(b.y + 0.3), 0xffb347, hit ? 1 : 0.7)
+    await this.impact(hit ? 1.1 : 0.5, side === 1)
+  }
+
   /** 防護兵の割り込み: 被弾の前に、庇う駒を味方と撃ち手の間へ素早く出す（見えていなければその場に現す） */
   private guard: { id: string; home: Pos; impact: THREE.Vector3 } | null = null
   async interpose(guardId: string, home: Pos, target: Pos, from: Pos): Promise<void> {
