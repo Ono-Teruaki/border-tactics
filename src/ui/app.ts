@@ -16,7 +16,7 @@ const MODE_LABEL: Record<VictoryMode, string> = { annihilation: '全滅', killCo
 function skillText(c: UnitClass): string {
   const t: string[] = []
   if (c.pursuit) t.push('追撃: 狙った敵の移動先に詰める')
-  if (c.markOnSight) t.push('観測: 見た敵をマーク（次の手まで味方から見え、命中+10）')
+  if (c.markOnSight) t.push(`観測: ${rules.skills.markTrigger === 'climb' ? '地上から屋上に登った手、' : ''}見えている敵をマーク（次の手まで味方から見え、命中+${rules.skills.markAccBonus}）`)
   if (c.sonar) t.push(`透視: ${c.sonar}マス以内は建物越しに見える`)
   if (c.suppress) t.push('制圧射撃: 2発以上当てた敵の移動-1・命中-15')
   if (c.steadyAim) t.push('狙撃態勢: 動かなければ命中+15・遮蔽半減')

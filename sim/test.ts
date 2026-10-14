@@ -125,8 +125,9 @@ const tests: Record<string, () => void> = {
     const g3 = createGame(m, mergeRules(rules1, { classes: { gunner: { sonar: 4 } } }), [['gunner'], ['gunner']])
     assert.equal(visibleEnemyIds(g3, 0).size, 1)
   },
-  '観測: スカウトが見た敵はマークされ、次の手もビルの裏から見え続ける'() {
+  '観測: スカウトが見た敵はマークされ、次の手もビルの裏から見え続ける（毎手発動の設定）'() {
     const m = mapOf(['.......', '...#...', '.......'], [{ x: 0, y: 1 }], [{ x: 4, y: 0 }])
+    const rules1 = mergeRules(DET, { teamSize: 1, skills: { markTrigger: 'always' } })
     const g = createGame(m, rules1, [['scout'], ['gunner']])
     // スカウト(0,1)から(4,0)は見える → マーク
     const ev = resolveTurn(g, [stay(g, 0), stay(g, 1)], createRng(1))
@@ -138,6 +139,16 @@ const tests: Record<string, () => void> = {
     resolveTurn(g2, [stay(g2, 0), stay(g2, 1)], createRng(1))
     g2.units[1].pos = { x: 4, y: 1 }
     assert.equal(visibleEnemyIds(g2, 0).size, 1) // 2手目の途中はマークで見える
+  },
+  '観測（既定）: 地上から屋上に登った手だけマークする'() {
+    const m = mapOf(['.......', '.#.....', '.......'], [{ x: 1, y: 0 }], [{ x: 5, y: 1 }])
+    const g = createGame(m, rules1, [['scout'], ['gunner']])
+    // 地上に居続ける手はマークしない
+    assert.ok(!resolveTurn(g, [stay(g, 0), stay(g, 1)], createRng(1)).some((e) => e.type === 'mark'))
+    // 屋上に登った手はマークする
+    assert.ok(resolveTurn(g, [[mv('0-0', 1, 1)], stay(g, 1)], createRng(1)).some((e) => e.type === 'mark'))
+    // 屋上に居続ける手はマークしない
+    assert.ok(!resolveTurn(g, [[mv('0-0', 1, 1)], stay(g, 1)], createRng(1)).some((e) => e.type === 'mark'))
   },
   '制圧: ガンナーが2発以上当てると次の手の移動力-1'() {
     const g = createGame(mapOf(open, [{ x: 0, y: 2 }], [{ x: 3, y: 2 }]), rules1, [['gunner'], ['attacker']])

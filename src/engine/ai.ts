@@ -262,7 +262,8 @@ function bestOrder(ctx: Ctx, u: Unit): Order {
 
     // ジャマー: 地上から屋上に登る手は、そこから見える敵を妨害できる。射手と索敵役ほど価値が高い
     let jam = 0
-    if (cls.jamOnClimb && t.visionBonus > 0 && terrainId(map, u.pos) !== 'building') {
+    const marksOnClimb = cls.markOnSight && rules.skills.markTrigger === 'climb'
+    if ((cls.jamOnClimb || marksOnClimb) && t.visionBonus > 0 && terrainId(map, u.pos) !== 'building') {
       for (const e of known) {
         if (e.age > 1 || !canSee(map, rules, u.cls, pos, e.pos)) continue
         const ec = classOf(rules, e)

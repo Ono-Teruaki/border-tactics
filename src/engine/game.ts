@@ -256,11 +256,12 @@ export function resolveTurn(state: GameState, orders: [Order[], Order[]], rng: R
     events.push({ type: 'jam', unitId: u.id, targets: seen.map((e) => e.id) })
   }
 
-  // --- 観測: スカウトが視界内の敵にマーク ---
+  // --- 観測: スカウトが視界内の敵にマーク（markTrigger = climb なら、地上から屋上へ登った手だけ） ---
   const sk = rules.skills
   for (const u of alive) {
     const c = classOf(rules, u)
     if (!c.markOnSight || u.markCooldownUntil >= T) continue
+    if (sk.markTrigger === 'climb' && (terrainId(map, origin.get(u.id)!) === 'building' || terrainId(map, u.pos) !== 'building')) continue
     const seen = alive
       .filter((e) => e.side !== u.side && canSee(map, rules, u.cls, u.pos, e.pos, stealthOf(rules, e, T) + jamOf(rules, u, T)))
       .sort((a, b) => dist(u.pos, a.pos) - dist(u.pos, b.pos))
