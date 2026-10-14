@@ -569,28 +569,31 @@ class Battle {
         if (guarded) {
           if (!isMine(guarded) && !disp.get(guarded)) reveal(guarded, unitOf(guarded).pos)
           const g = disp.get(guarded)
-          if (g) {
-            this.board.popup(g.pos, '庇う', '#37c3ff', 900)
-            g.hp = guardHp = Math.max(0, (g.hp ?? unitOf(guarded).hp) - guardDmg)
-          }
+          if (g) g.hp = guardHp = Math.max(0, (g.hp ?? unitOf(guarded).hp) - guardDmg)
+          show()
         }
         this.caption(
           `${this.name(e.unitId)}（速${a.spd}）→ ${this.name(e.hitId)}　命中率${e.chance}%${e.cover !== 'none' ? `（ビルに隠れて${e.cover === 'half' ? '大' : '小'}）` : ''}${e.shots.length > 1 ? `　${hits}/${e.shots.length}発` : ''}${guarded ? `　／ ${this.name(guarded)}が庇った -${guardDmg}${guardHp === 0 ? '（撃破）' : ''}` : ''}`,
         )
         const side = isMine(e.unitId) ? 0 : 1
-        // 当たった弾がすべて庇われたら、弾は防護兵へ飛ぶ
+        const arc = a.arc
+        // 防護兵: 被弾の前に、庇う駒が味方と撃ち手の間へ割り込む
         const allGuarded = !!guarded && e.shots.every((x) => !x.hit || x.guardedBy)
-        const to = allGuarded ? (disp.get(guarded!)?.pos ?? unitOf(guarded!).pos) : e.target
-        const toId = allGuarded ? guarded! : e.hitId
-        const lethal = allGuarded ? guardHp === 0 : e.targetHp <= 0
-        if (Math.abs(e.from.x - to.x) + Math.abs(e.from.y - to.y) <= 1) {
-          await this.board.meleeStrike(e.unitId, e.from, to, side, e.shots, toId, lethal)
-        } else if (lethal) {
-          await this.board.killShot(e.from, to, side, e.shots, e.spotted && isMine(e.unitId), toId)
-        } else {
-          await this.board.focus([e.from, to], 420)
-          await this.board.volley(e.from, to, side, e.shots, e.spotted && isMine(e.unitId), toId)
+        if (guarded) {
+          await this.board.focus([e.from, e.target], 380)
+          await this.board.interpose(guarded, unitOf(guarded).pos, e.target, e.from)
         }
+        const lethal = allGuarded ? guardHp === 0 : e.targetHp <= 0
+        const hitId = allGuarded ? guarded! : e.hitId
+        if (Math.abs(e.from.x - e.target.x) + Math.abs(e.from.y - e.target.y) <= 1) {
+          await this.board.meleeStrike(e.unitId, e.from, e.target, side, e.shots, hitId, lethal)
+        } else if (lethal) {
+          await this.board.killShot(e.from, e.target, side, e.shots, e.spotted && isMine(e.unitId), hitId, arc)
+        } else {
+          if (!guarded) await this.board.focus([e.from, e.target], 420)
+          await this.board.volley(e.from, e.target, side, e.shots, e.spotted && isMine(e.unitId), hitId, arc)
+        }
+        if (guarded) await this.board.endInterpose(guardHp !== 0)
         const t = disp.get(e.hitId)
         if (t) t.hp = e.targetHp
         // 爆風で巻き込んだ敵

@@ -477,25 +477,26 @@ export class Board3D {
   }
 
   /** 弾ごとに発射して命中/ミスを表示。命中時はヒットストップ・閃光・揺れ */
-  async volley(from: Pos, to: Pos, side: 0 | 1, shots: { hit: boolean; damage: number }[], spotted: boolean, targetId?: string): Promise<void> {
+  async volley(from: Pos, to: Pos, side: 0 | 1, shots: { hit: boolean; damage: number }[], spotted: boolean, targetId?: string, arc = false): Promise<void> {
     if (spotted) this.popup(from, '索敵連携', '#3ddc84', 900)
     const color = side === 0 ? C.me : C.en
     for (let i = 0; i < shots.length; i++) {
       const s = shots[i]
       const a = this.world(from, 0.5)
-      const b = this.world(to, 0.45)
+      const b = s.hit && this.guard ? this.guard.impact.clone() : this.world(to, 0.45)
       if (!s.hit) {
         // 外れ弾は少しそらす
         const off = new THREE.Vector3(-(b.z - a.z), 0, b.x - a.x).normalize().multiplyScalar((i % 2 ? 1 : -1) * 0.45)
         b.add(off).add(b.clone().sub(a).normalize().multiplyScalar(0.5))
       }
-      await this.tracer(a, b, color, shots.length > 1 ? 110 : 170)
+      await this.tracer(a, b, color, arc ? 420 + a.distanceTo(b) * 60 : shots.length > 1 ? 110 : 170, arc)
       const dx = (i - (shots.length - 1) / 2) * 0.45
       if (s.hit) {
-        this.burst(to, color, 0.45)
-        if (targetId) {
-          this.flash(targetId)
-          this.knockback(targetId, from)
+        this.burstAt(b, color, arc ? 0.7 : 0.45)
+        const hitId = this.guard?.id ?? targetId
+        if (hitId) {
+          this.flash(hitId)
+          this.knockback(hitId, from)
         }
         this.popup(to, `-${s.damage}`, '#ff5b47', 850, dx, 1.25)
         // 手応え：ダメージが大きいほど強く。連射は1発ごとに軽く
@@ -510,7 +511,8 @@ export class Board3D {
   }
 
   /** 弾道：先端が飛んでいき、残光が消える */
-  private tracer(a: THREE.Vector3, b: THREE.Vector3, color: number, flight: number): Promise<void> {
+  private tracer(a: THREE.Vector3, b: THREE.Vector3, color: number, flight: number, arc = false): Promise<void> {
+    if (arc) return this.lob(a, b, color, flight)
     const len = a.distanceTo(b)
     const dir = b.clone().sub(a).normalize()
     const beam = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.035, 1, 8), new THREE.MeshBasicMaterial({ color, transparent: true }))
@@ -533,9 +535,61 @@ export class Board3D {
     return fly
   }
 
+  /** 山なりの弾道（擲弾）。放物線の軌跡を残しながら弾が飛ぶ */
+  private lob(a: THREE.Vector3, b: THREE.Vector3, color: number, flight: number): Promise<void> {
+    const h = 0.9 + a.distanceTo(b) * 0.25
+    const at = (t: number) => new THREE.Vector3().lerpVectors(a, b, t).setY(a.y + (b.y - a.y) * t + 4 * h * t * (1 - t))
+    const N = 32
+    const pts = new Float32Array((N + 1) * 3)
+    const geo = new THREE.BufferGeometry()
+    geo.setAttribute('position', new THREE.BufferAttribute(pts, 3))
+    geo.setDrawRange(0, 0)
+    const trail = new THREE.Line(geo, new THREE.LineBasicMaterial({ color, transparent: true }))
+    const head = new THREE.Mesh(new THREE.SphereGeometry(0.13, 12, 8), new THREE.MeshBasicMaterial({ color: 0xffb347 }))
+    this.fxGroup.add(trail, head)
+    for (let i = 0; i <= N; i++) at(i / N).toArray(pts, i * 3)
+    const fly = this.tween(flight, (t) => {
+      geo.setDrawRange(0, Math.max(1, Math.round(t * N) + 1))
+      head.position.copy(at(t))
+      head.rotation.x += 0.4
+    })
+    fly.then(() => {
+      this.fxGroup.remove(head)
+      this.tween(380, (t) => void ((trail.material as THREE.LineBasicMaterial).opacity = 1 - t)).then(() => void this.fxGroup.remove(trail))
+    })
+    return fly
+  }
+
+  /** 防護兵の割り込み: 被弾の前に、庇う駒を味方と撃ち手の間へ素早く出す（見えていなければその場に現す） */
+  private guard: { id: string; home: Pos; impact: THREE.Vector3 } | null = null
+  async interpose(guardId: string, home: Pos, target: Pos, from: Pos): Promise<void> {
+    const g = this.pieces.get(guardId)
+    if (!g) return
+    const t = this.world(target)
+    const dir = this.world(from).sub(t).setY(0).normalize()
+    const spot = t.clone().addScaledVector(dir, 0.42)
+    this.setOpacity(g, 1)
+    const start = g.position.clone()
+    this.popup(home, '庇う', '#37c3ff', 900)
+    await this.tween(240, (k) => {
+      const e = 1 - (1 - k) ** 3
+      g.position.lerpVectors(start, spot, e)
+      g.position.y += Math.sin(Math.PI * k) * 0.2
+    })
+    this.guard = { id: guardId, home, impact: spot.clone().setY(spot.y + 0.45) }
+  }
+  /** 割り込んだ防護兵を元のマスへ戻す（撃破されていれば何もしない） */
+  async endInterpose(alive: boolean): Promise<void> {
+    const gd = this.guard
+    this.guard = null
+    if (gd && alive) await this.movePiece(gd.id, gd.home, 320)
+  }
+
   /** 着弾の衝撃波と火花 */
   burst(at: Pos, color: number, size: number) {
-    const c = this.world(at, 0.45)
+    this.burstAt(this.world(at, 0.45), color, size)
+  }
+  private burstAt(c: THREE.Vector3, color: number, size: number) {
     const ring = new THREE.Mesh(new THREE.RingGeometry(0.2, 0.28, 32), new THREE.MeshBasicMaterial({ color, transparent: true, side: THREE.DoubleSide, depthWrite: false }))
     ring.position.copy(c)
     ring.lookAt(this.camera.position)
@@ -791,13 +845,13 @@ export class Board3D {
    * 遠距離でのとどめ：撃ち手に寄って発射 → 弾を追う → 着弾の瞬間をスローで。
    * それまでの弾は通常どおり。
    */
-  async killShot(from: Pos, to: Pos, side: 0 | 1, shots: { hit: boolean; damage: number }[], spotted: boolean, targetId: string): Promise<void> {
+  async killShot(from: Pos, to: Pos, side: 0 | 1, shots: { hit: boolean; damage: number }[], spotted: boolean, targetId: string, arc = false): Promise<void> {
     const color = side === 0 ? C.me : C.en
     const lastHit = shots.map((x) => x.hit).lastIndexOf(true)
     const before = shots.slice(0, lastHit)
     if (before.length) {
       await this.focus([from, to], 380)
-      await this.volley(from, to, side, before, spotted, targetId)
+      await this.volley(from, to, side, before, spotted, targetId, arc)
     } else if (spotted) this.popup(from, '索敵連携', '#3ddc84', 900)
     // 撃ち手のアップ
     await this.focus([from], 380, 3.4)
@@ -806,15 +860,15 @@ export class Board3D {
     // 弾を追う（スロー）
     this.timeScale = 0.5
     const a = this.world(from, 0.5)
-    const b = this.world(to, 0.45)
-    const flight = 260 + a.distanceTo(b) * 60
+    const b = this.guard ? this.guard.impact.clone() : this.world(to, 0.45)
+    const flight = (arc ? 520 : 260) + a.distanceTo(b) * 60
     const cam = this.focus([to], flight, 3.4)
-    await this.tracer(a, b, color, flight)
+    await this.tracer(a, b, color, flight, arc)
     await cam
     // 着弾
     const s = shots[lastHit]
-    this.burst(to, color, 0.75)
-    this.flash(targetId)
+    this.burstAt(b, color, 0.75)
+    this.flash(this.guard?.id ?? targetId)
     this.popup(to, `-${s.damage}`, '#ff5b47', 1000, 0, 1.7)
     await this.impact(1.5, side === 1)
     this.timeScale = 1
