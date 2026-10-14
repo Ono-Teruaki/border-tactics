@@ -1,14 +1,14 @@
 :root {
-  color-scheme: light;
-  --bg: #f4f6f9;
-  --panel: #ffffff;
-  --line: #dde2e9;
-  --text: #1d2330;
-  --muted: #6b7480;
-  --me: #2f6fec;
-  --en: #e0443e;
+  color-scheme: dark;
+  --bg: #0d1b2e;
+  --panel: #12253c;
+  --line: #2c4a6a;
+  --text: #e3f4ff;
+  --muted: #8aa4bf;
+  --me: #37c3ff;
+  --en: #ff5b47;
   font-family: system-ui, -apple-system, 'Hiragino Sans', sans-serif;
-  background: var(--bg);
+  background: linear-gradient(#0d1b2e, #1a2d47) fixed;
   color: var(--text);
   -webkit-tap-highlight-color: transparent;
 }
@@ -35,10 +35,11 @@ button:disabled {
 .primary {
   background: var(--me);
   border-color: var(--me);
-  color: #fff;
-  font-weight: 700;
+  color: #06223a;
+  font-weight: 800;
   padding: 12px;
   width: 100%;
+  box-shadow: 0 0 16px rgba(55, 195, 255, 0.45);
 }
 .link {
   background: none;
@@ -59,7 +60,7 @@ button:disabled {
 }
 .chip.on {
   border-color: var(--me);
-  background: #e8f0fe;
+  background: rgba(55, 195, 255, 0.15);
   color: var(--me);
 }
 .sub {
@@ -123,21 +124,21 @@ button:disabled {
   grid-row: span 3;
 }
 .classcard small.skill {
-  color: #1f7a4a;
+  color: #3ddc84;
 }
 .classcard small {
   color: var(--muted);
 }
 .minimap {
-  background: #c3cad4;
+  background: #0c1828;
   padding: 1px;
   border-radius: 4px;
 }
 .t-plain {
-  background: #f7f8fa;
+  background: #183a58;
 }
 .t-building {
-  background: #8fa6c2;
+  background: #5cc8f0;
 }
 .minimap i.s-me {
   box-shadow: inset 0 0 0 3px var(--me);
@@ -151,11 +152,11 @@ button:disabled {
   width: 32px;
   height: 32px;
   border-radius: 50%;
-  background: #fff;
+  background: var(--panel);
   border: 2px solid var(--me);
-  color: var(--text);
+  color: var(--me);
   font-weight: 800;
-  box-shadow: 0 1px 3px rgba(20, 30, 50, 0.15);
+  box-shadow: 0 0 8px rgba(55, 195, 255, 0.35);
 }
 .pico.small {
   width: 22px;
@@ -165,6 +166,7 @@ button:disabled {
 }
 
 /* 戦闘画面 */
+/* 盤面を画面いっぱいに使う。HUD・パネル・ログは上下に寄せる */
 .battle {
   max-width: 560px;
   margin: 0 auto;
@@ -172,6 +174,8 @@ button:disabled {
   flex-direction: column;
   gap: 6px;
   padding-block: 6px;
+  height: calc(100dvh - env(safe-area-inset-top) - env(safe-area-inset-bottom));
+  box-sizing: border-box;
 }
 .hud {
   display: flex;
@@ -189,7 +193,8 @@ button:disabled {
 .stage {
   position: relative;
   width: 100%;
-  height: min(56dvh, 90vw);
+  flex: 1;
+  min-height: 0;
   border-radius: 10px;
   overflow: hidden;
   border: 1px solid var(--line);
@@ -199,7 +204,7 @@ button:disabled {
   touch-action: none;
 }
 .hint.warn {
-  color: #c07a00;
+  color: #ffc247;
 }
 .zoom {
   display: inline-flex;
@@ -209,7 +214,7 @@ button:disabled {
 .sheet,
 .classcard,
 .slot {
-  box-shadow: 0 1px 4px rgba(20, 30, 50, 0.06);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35);
 }
 .panel {
   background: var(--panel);
@@ -227,7 +232,8 @@ button:disabled {
 .log {
   font-size: 12px;
   color: var(--muted);
-  max-height: 120px;
+  max-height: 64px;
+  flex-shrink: 0;
   overflow-y: auto;
 }
 
@@ -235,7 +241,7 @@ button:disabled {
 .modal {
   position: fixed;
   inset: 0;
-  background: rgba(20, 30, 50, 0.35);
+  background: rgba(2, 6, 12, 0.6);
   display: grid;
   place-items: end center;
   z-index: 10;
@@ -262,14 +268,14 @@ button:disabled {
   bottom: 10px;
   transform: translateX(-50%);
   max-width: calc(100% - 24px);
-  background: rgba(255, 255, 255, 0.92);
+  background: rgba(10, 20, 36, 0.88);
   border: 1px solid var(--line);
   border-radius: 999px;
   padding: 5px 12px;
   font-size: 12px;
   line-height: 1.4;
   font-weight: 700;
-  box-shadow: 0 2px 8px rgba(20, 30, 50, 0.12);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4);
   pointer-events: none;
   text-align: center;
 }
