@@ -14,7 +14,7 @@ export function createGame(map: MapDef, rules: RulesConfig, comps: [string[], st
       units.push({ id: `${side}-${i}`, side, cls, pos: { ...map.spawns[side][i] }, hp: c.hp, alive: true, markedUntil: 0, suppressedUntil: 0, markCooldownUntil: 0, stealthUntil: 0, jammedUntil: 0 })
     })
   }
-  const state: GameState = { map, rules, units, turn: 1, kills: [0, 0], killCost: [0, 0], intel: [{}, {}], over: false, history: [] }
+  const state: GameState = { map, rules, units, turn: 1, kills: [0, 0], killCost: [0, 0], intel: [{}, {}], over: false, history: [], radarUntil: [0, 0] }
   // 出撃位置と編成はお互いに既知
   for (const u of units) {
     state.intel[(1 - u.side) as Side][u.id] = { unitId: u.id, cls: u.cls, pos: { ...u.pos }, hp: u.hp, turn: 0, visible: false }
@@ -114,8 +114,13 @@ export function visibleEnemyIds(state: GameState, side: Side, atTurn = state.tur
   const { map, rules } = state
   const mine = state.units.filter((u) => u.alive && u.side === side)
   const out = new Set<string>()
+  const radar = (state.radarUntil?.[side] ?? 0) >= atTurn
   for (const e of state.units) {
     if (!e.alive || e.side === side) continue
+    if (radar) {
+      out.add(e.id)
+      continue
+    }
     if (e.markedUntil >= atTurn || mine.some((m) => canSee(map, rules, m.cls, m.pos, e.pos, stealthOf(rules, e, atTurn) + jamOf(rules, m, atTurn), isSilenced(rules, m, atTurn)))) out.add(e.id)
   }
   return out
@@ -432,6 +437,17 @@ export function resolveTurn(state: GameState, orders: [Order[], Order[]], rng: R
   }
 
   if (rules.attackReveals) for (const u of attackers) reveal(state, (1 - u.side) as Side, u, T)
+
+  // --- レーダー塔: 手の終わりに塔の上にいれば、次の手は敵全員が見える ---
+  if (rules.radar && map.radars?.length) {
+    state.radarUntil ??= [0, 0]
+    for (const u of state.units) {
+      if (!u.alive || !map.radars.some((r) => samePos(r, u.pos))) continue
+      state.radarUntil[u.side] = T + 1
+      if (rules.radarMark) for (const e of state.units) if (e.alive && e.side !== u.side) e.markedUntil = Math.max(e.markedUntil, T + 1)
+      events.push({ type: 'radar', unitId: u.id, side: u.side })
+    }
+  }
 
   state.history.push(events)
   updateIntel(state)

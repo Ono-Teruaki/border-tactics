@@ -86,6 +86,10 @@ export interface RulesConfig {
   terrain: Record<TerrainId, TerrainRule>
   /** true: 味方の誰かが見ている敵を撃てる（索敵が射撃に直結） / false: 自分の目で見えている敵のみ */
   sharedTargeting: boolean
+  /** レーダー塔（マップに radars があるときだけ）。false で無効 */
+  radar: boolean
+  /** レーダー塔で見えた敵にマークも付ける（命中+） */
+  radarMark: boolean
   cover: {
     /** 屋上からならビル越しに撃てる（false: 射線上にビルがあれば撃てない。視界は通る） */
     fireOverBuildings: boolean
@@ -171,6 +175,8 @@ export interface MapDef {
   /** '.' 平地, '#' ビル */
   tiles: string[]
   spawns: [Pos[], Pos[]]
+  /** レーダー塔（ビルのマス）。手の終わりに上にいると、次の手は敵全員が見える */
+  radars?: Pos[]
 }
 
 export interface Unit {
@@ -251,6 +257,8 @@ export type GameEvent =
   | { type: 'pursuit'; unitId: string; from: Pos; to: Pos }
   /** 妨害: ジャマー unitId が屋上に登り、見えていた敵 targets を妨害した */
   | { type: 'jam'; unitId: string; targets: string[] }
+  /** レーダー塔: unitId が塔の上で手を終え、次の手は敵全員が見える */
+  | { type: 'radar'; unitId: string; side: Side }
   /** 後送: 衛生兵 unitId が味方 allyId を from から to へ引っ張ってきた */
   | { type: 'evac'; unitId: string; allyId: string; from: Pos; to: Pos }
 
@@ -265,6 +273,8 @@ export interface GameState {
   intel: [Record<string, Intel>, Record<string, Intel>]
   over: boolean
   history: GameEvent[][]
+  /** radarUntil[side]: この手まで、side はレーダー塔で敵全員が見える */
+  radarUntil?: [number, number]
 }
 
 export interface Observation {

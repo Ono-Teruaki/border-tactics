@@ -186,6 +186,19 @@ export class Board3D {
           const edge = new THREE.LineSegments(new THREE.EdgesGeometry(b.geometry), edgeMat)
           edge.position.copy(b.position)
           this.scene.add(edge)
+          // レーダー塔: 屋上にアンテナと光る輪
+          if (this.map.radars?.some((r) => r.x === x && r.y === y)) {
+            const amber = new THREE.MeshBasicMaterial({ color: C.warn })
+            const mast = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.035, 0.55, 8), amber)
+            mast.position.copy(this.world(p, BUILDING_H + 0.275))
+            const dish = new THREE.Mesh(new THREE.TorusGeometry(0.16, 0.022, 8, 24), amber)
+            dish.position.copy(this.world(p, BUILDING_H + 0.5))
+            dish.rotation.x = -Math.PI / 3
+            const ring = new THREE.Mesh(new THREE.RingGeometry(0.36, 0.42, 32), new THREE.MeshBasicMaterial({ color: C.warn, transparent: true, opacity: 0.55, side: THREE.DoubleSide }))
+            ring.rotation.x = -Math.PI / 2
+            ring.position.copy(this.world(p, BUILDING_H + 0.012))
+            this.scene.add(mast, dish, ring)
+          }
         }
         const ov = new THREE.Mesh(new THREE.PlaneGeometry(0.98, 0.98), new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false }))
         ov.rotation.x = -Math.PI / 2

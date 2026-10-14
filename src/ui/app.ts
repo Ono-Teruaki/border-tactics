@@ -140,6 +140,7 @@ function showHelp() {
         h('li', {}, '命中率は距離が遠いほど下がり、相手がこちら側のビルに張り付いていると（遮蔽:半）、斜め側にビルがあると（遮蔽:小）さらに下がります。屋上から撃つと上がります。'),
         h('li', {}, '同じマスに入ろうとすると弾かれて元の位置に戻ります。敵とぶつかると互いの位置がバレます。'),
         h('li', {}, 'ビル: 地上の視線を遮る。登ると（移動コスト2）視界+2・射程+1、ビル越しに「見る」ことはできる。'),
+        ...(rules.radar ? [h('li', {}, '📡 レーダー塔（アンテナの立ったビル）: 手の終わりに上にいると、次の手は敵全員の位置が見えます（撃てる相手も増えます）。')] : []),
         h('li', {}, '盤面: ピンチ / ホイール / ＋－ボタンでズーム、ズーム中はドラッグで移動。'),
         h('li', {}, 'スナイパーは2マス以上動いたターンは撃てません（矢印が橙色になります）。'),
         h('li', {}, `勝敗: ${rules.turnLimit}手終了時の撃破コスト合計（全滅で即終了）。`),
@@ -325,6 +326,8 @@ class Battle {
       h('span', {}, `${Math.min(s.turn, rules.turnLimit)}手目 / ${rules.turnLimit}`),
       h('span', { class: 'score' }, h('b', { class: 'c-me' }, String(s.killCost[0])), ' - ', h('b', { class: 'c-en' }, String(s.killCost[1]))),
       h('span', {}, `敵残 ${s.units.filter((u) => u.alive && u.side === 1).length}`),
+      ...((s.radarUntil?.[0] ?? 0) >= s.turn ? [h('span', { class: 'c-me' }, '📡 敵全員が見える')] : []),
+      ...((s.radarUntil?.[1] ?? 0) >= s.turn ? [h('span', { class: 'c-en' }, '📡 敵に見られている')] : []),
       h(
         'span',
         { class: 'zoom' },
@@ -635,6 +638,12 @@ class Battle {
         this.caption(`${this.name(e.unitId)} 撃てず：${BLOCK_LABEL[e.reason]}`)
         await this.board.focus([disp.get(e.unitId)?.pos ?? u.pos], 350)
         await this.board.popup(disp.get(e.unitId)?.pos ?? u.pos, `× ${BLOCK_LABEL[e.reason]}`, '#ffc247', 800)
+      } else if (e.type === 'radar') {
+        const mine = isMine(e.unitId)
+        this.caption(mine ? `${this.name(e.unitId)} レーダー塔を確保：次の手は敵全員が見える` : '敵がレーダー塔を確保：次の手はこちらの位置が全て見られる')
+        const at = disp.get(e.unitId)?.pos
+        if (at) this.board.popup(at, '📡 レーダー', mine ? '#37c3ff' : '#ff5b47', 1000)
+        await this.board.wait(600)
       } else if (e.type === 'bailout') {
         this.caption(`💥 ${this.name(e.unitId)} 撃破`)
         const killer = [...events].reverse().find((x) => x.type === 'attack' && x.hitId === e.unitId)
@@ -692,6 +701,7 @@ class Battle {
         for (const s of e.splash ?? []) lines.push(`　爆風: ${this.name(s.id)} -${s.damage}`)
       }
       if (e.type === 'bailout') lines.push(`💥 ${this.name(e.unitId)} 撃破`)
+      if (e.type === 'radar') lines.push(u.side === 0 ? `📡 ${this.name(e.unitId)}: レーダー塔を確保（次の手は敵全員が見える）` : '📡 敵がレーダー塔を確保（次の手は位置が見られる）')
       if (e.type === 'jam' && u.side === 0) lines.push(`${this.name(e.unitId)}: ${e.targets.map((t) => this.name(t)).join('・')} を妨害`)
       if (e.type === 'jam' && u.side === 1 && e.targets.length) lines.push(`${this.name(e.unitId)} に妨害された`)
       if (e.type === 'evac' && u.side === 0) lines.push(`${this.name(e.unitId)}: ${this.name(e.allyId)} を後送`)

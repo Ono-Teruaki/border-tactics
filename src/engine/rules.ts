@@ -26,6 +26,8 @@ export const DEFAULT_RULES: RulesConfig = {
     building: { name: 'ビル', passable: true, moveCost: 2, blocksLos: true, visionBonus: 2, rangeBonus: 1, seesOverBlockers: true },
   },
   sharedTargeting: true,
+  radar: true,
+  radarMark: false,
   cover: { fireOverBuildings: false, wallHug: true },
   skills: { markDuration: 1, markAccBonus: 10, markPerTurn: 99, markCooldown: 0, suppressMove: 1, suppressAcc: 15, steadyAcc: 15, guardHitsPerTurn: 99, guardSameHeight: true, maxPerClass: 2, markTrigger: 'climb', stealthTrigger: 'descend', jamVision: 2, jamAcc: 20, jamDuration: 1, jamSilence: true, blastShape: 'plus' },
   vision: { deadZone: true },

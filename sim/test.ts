@@ -254,6 +254,27 @@ const tests: Record<string, () => void> = {
     assert.ok(play(false) > 0)
     assert.equal(play(true), 0)
   },
+  'レーダー塔の上で手を終えると、次の手は敵全員が見える'() {
+    const m: MapDef = { ...mapOf(['.......', '.#.....', '.......', '...#...', '.......', '.....#.', '.......'], [{ x: 0, y: 6 }], [{ x: 6, y: 0 }]), radars: [{ x: 1, y: 1 }, { x: 5, y: 5 }] }
+    const g = createGame(m, rules1, [['gunner'], ['sniper']])
+    unit(g, '0-0').pos = { x: 1, y: 2 }
+    unit(g, '1-0').pos = { x: 6, y: 6 }
+    resolveTurn(g, [stay(g, 0), stay(g, 1)], createRng(1))
+    assert.ok(!visibleEnemyIds(g, 0).has('1-0'))
+    const ev = resolveTurn(g, [[mv('0-0', 1, 1)], stay(g, 1)], createRng(1))
+    assert.ok(ev.some((e) => e.type === 'radar' && e.unitId === '0-0'))
+    assert.ok(visibleEnemyIds(g, 0).has('1-0'))
+    assert.equal(observe(g, 0).enemies.find((e) => e.unitId === '1-0')?.visible, true)
+    // 降りれば次の手の終わりで切れる
+    resolveTurn(g, [[mv('0-0', 1, 2)], stay(g, 1)], createRng(1))
+    assert.ok(!visibleEnemyIds(g, 0).has('1-0'))
+    // ルールで無効化
+    const g2 = createGame(m, mergeRules(rules1, { radar: false }), [['gunner'], ['sniper']])
+    unit(g2, '0-0').pos = { x: 1, y: 2 }
+    unit(g2, '1-0').pos = { x: 6, y: 6 }
+    resolveTurn(g2, [[mv('0-0', 1, 1)], stay(g2, 1)], createRng(1))
+    assert.ok(!visibleEnemyIds(g2, 0).has('1-0'))
+  },
   '張り付きの制限は射撃だけ。近接クラスは屋上から真下の敵を攻撃できる'() {
     const m = mapOf(['.#.....', '.......'], [{ x: 1, y: 0 }], [{ x: 2, y: 0 }])
     const g = createGame(m, rules1, [['attacker'], ['gunner']])

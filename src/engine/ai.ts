@@ -44,6 +44,8 @@ export interface AiParams {
   killWeight?: number
   /** 爆風持ちの敵がいるとき、上下左右に味方がいるマスを避ける強さ（既定 1） */
   spread?: number
+  /** レーダー塔を取りに行く強さ（既定 1）。塔に一番近い味方1体が向かう */
+  radar?: number
   random?: boolean
 }
 
@@ -81,7 +83,7 @@ export function decideOrders(obs: Observation, rng: Rng, params: AiParams): Orde
     .filter((e) => e.age <= params.memory || e.turn === 0)
   const isSupport = (u: Unit) => classOf(rules, u).heal > 0 || classOf(rules, u).guardReduce > 0
   const isLateHealer = (u: Unit) => !!params.healerLast && classOf(rules, u).heal > 0
-  const ctx: Ctx = { obs, known, reserved: new Set(), planned: new Map(obs.mine.map((u) => [u.id, u.pos])), guards: [], targets: new Map(), dmg: new Map(), rng, p: params }
+  const ctx: Ctx = { obs, known, reserved: new Set(), planned: new Map(obs.mine.map((u) => [u.id, u.pos])), guards: [], targets: new Map(), dmg: new Map(), radarRunner: radarRunners(obs), rng, p: params }
   const fw = params.fireWeight ?? 1.5
   const aim = (o: Order, sign = 1) => {
     if (!o.target) return
@@ -144,6 +146,8 @@ interface Ctx {
   targets: Map<string, number>
   /** 決定済みの味方の狙いの期待ダメージ（敵ID → 合計） */
   dmg: Map<string, number>
+  /** レーダー塔へ向かう味方（ユニットID → 塔の位置） */
+  radarRunner: Map<string, Pos>
   rng: Rng
   p: AiParams
 }
@@ -169,6 +173,16 @@ function aimDamage(ctx: Ctx, u: Unit, pos: Pos, target: string): number {
   const e = ctx.known.find((k) => k.unitId === target && k.age === 0)
   if (!e) return 0
   return strikeEstimate(ctx, u, pos, e, 1)?.exp ?? 0
+}
+
+/** レーダー塔へ向かう味方を1体だけ決める（塔との距離が一番近い組み合わせ）。塔の上に味方がいれば、そのユニットが留まる */
+function radarRunners(obs: Observation): Map<string, Pos> {
+  const out = new Map<string, Pos>()
+  if (!obs.rules.radar || !obs.map.radars?.length) return out
+  let best: { id: string; r: Pos; d: number } | null = null
+  for (const r of obs.map.radars) for (const u of obs.mine) if (!best || dist(u.pos, r) < best.d) best = { id: u.id, r, d: dist(u.pos, r) }
+  if (best) out.set(best.id, best.r)
+  return out
 }
 
 /** 爆風で巻き込めそうな敵の見込み（HP比） */
@@ -343,10 +357,15 @@ function bestOrder(ctx: Ctx, u: Unit): Order {
       cohesion += p.blob * Math.min(3, near)
     }
 
+    // レーダー塔: 割り当てられた味方は塔へ向かい、乗れば大きく加点
+    let radar = 0
+    const tower = ctx.radarRunner.get(u.id)
+    if (tower) radar = samePos(pos, tower) ? 2 : -0.25 * dist(pos, tower)
+
     const roof = t.visionBonus > 0 && (cls.range > 1 || isScout) ? 1 + visionRange(map, rules, u.cls, pos) * 0.05 : 0
     const action = Math.max(fire.value * (p.fireWeight ?? 1.5), sup)
     const score =
-      p.aggression * (action + progress) - p.caution * threat * 0.6 + p.scouting * scout + p.roofPref * roof + p.rush * rush + p.evade * evade + cohesion + (p.jam ?? 1) * jam + rng.next() * p.noise
+      p.aggression * (action + progress) - p.caution * threat * 0.6 + p.scouting * scout + p.roofPref * roof + p.rush * rush + p.evade * evade + cohesion + (p.jam ?? 1) * jam + (p.radar ?? 1) * radar + rng.next() * p.noise
     if (!best || score > best.score) best = { score, pos, target: sup > fire.value * (p.fireWeight ?? 1.5) ? undefined : fire.target }
   }
   const dest = best?.pos ?? { ...u.pos }
