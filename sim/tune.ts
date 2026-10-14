@@ -28,6 +28,7 @@ const KNOBS: { key: keyof AiParams; label: string; lo: number; hi: number; def: 
   { key: 'fireWeight', label: '撃つ価値（対 支援）', lo: 0.3, hi: 3, def: 1.5 },
   { key: 'cohesion', label: '支援役が味方に寄る', lo: 0, hi: 1.5, def: 0.4 },
   { key: 'focus', label: '集中砲火', lo: 0, hi: 1.5, def: 0 },
+  { key: 'jam', label: '屋上に登って妨害', lo: 0, hi: 3, def: 1 },
 ]
 
 interface Job {

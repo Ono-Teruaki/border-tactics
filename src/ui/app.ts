@@ -21,6 +21,7 @@ function skillText(c: UnitClass): string {
   if (c.suppress) t.push('制圧射撃: 2発以上当てた敵の移動-1・命中-15')
   if (c.steadyAim) t.push('狙撃態勢: 動かなければ命中+15・遮蔽半減')
   if (c.heal) t.push(`応急手当: 狙わない手は周囲8マスの味方を${c.heal}回復`)
+  if (c.jamOnClimb) t.push(`妨害: 地上から屋上に登った手、見えている敵の視界-${rules.skills.jamVision}・命中率-${rules.skills.jamAcc}（次の手まで）`)
   if (c.evac) t.push('後送: 狙わない手は、移動前に隣にいた一番傷の深い味方を交戦の後で自分の隣へ連れ戻す')
   if (c.stealth) t.push(`隠密: ${rules.skills.stealthTrigger === 'descend' ? '屋上から降りた手' : '狙わない手'}と次の手は、敵から見つかる距離-${c.stealth}`)
   if (c.guardReduce) t.push(`カバーリング: 狙わない手は周囲8マスの味方の被弾を肩代わり（-${Math.round(c.guardReduce * 100)}%）`)
@@ -588,6 +589,13 @@ class Battle {
         }
         show()
         await this.board.wait(500)
+      } else if (e.type === 'jam') {
+        const shown = e.targets.filter((t) => isMine(t) || disp.get(t))
+        if (isMine(e.unitId) || shown.length) {
+          this.caption(`${this.name(e.unitId)} 妨害：${e.targets.map((t) => this.name(t)).join('・')} の視界と命中率が下がる`)
+          for (const t of shown) this.board.popup(disp.get(t)?.pos ?? unitOf(t).pos, '妨害', '#c58cff', 900)
+          await this.board.wait(500)
+        }
       } else if (e.type === 'evac') {
         const d = disp.get(e.allyId)
         if (d && !d.ghost) {
@@ -672,6 +680,8 @@ class Battle {
         lines.push(`${this.name(e.unitId)} → ${this.name(e.hitId)}: ${hits}/${e.shots.length}発命中 -${e.damage}（命中率${e.chance}%）${e.spotted && u.side === 0 ? '［索敵連携］' : ''}`)
       }
       if (e.type === 'bailout') lines.push(`💥 ${this.name(e.unitId)} 撃破`)
+      if (e.type === 'jam' && u.side === 0) lines.push(`${this.name(e.unitId)}: ${e.targets.map((t) => this.name(t)).join('・')} を妨害`)
+      if (e.type === 'jam' && u.side === 1 && e.targets.length) lines.push(`${this.name(e.unitId)} に妨害された`)
       if (e.type === 'evac' && u.side === 0) lines.push(`${this.name(e.unitId)}: ${this.name(e.allyId)} を後送`)
     }
     if (!lines.length) lines.push('交戦なし')

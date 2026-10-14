@@ -3,7 +3,7 @@ import type { RulesConfig, UnitClass } from './types.ts'
 type ClassBase = Pick<UnitClass, 'id' | 'name' | 'kanji' | 'short' | 'hp' | 'atk' | 'def' | 'spd' | 'shots' | 'accuracy' | 'falloff' | 'move' | 'range' | 'vision' | 'cost'>
 /** スキル系の項目は既定値（なし）で埋める */
 function cls(c: ClassBase & Partial<UnitClass>): UnitClass {
-  return { attackMaxMove: 99, closePenalty: 0, pursuit: false, markOnSight: false, sonar: 0, suppress: false, steadyAim: false, heal: 0, healRange: 1, guardReduce: 0, pen: 0, evac: false, stealth: 0, ...c }
+  return { attackMaxMove: 99, closePenalty: 0, pursuit: false, markOnSight: false, sonar: 0, suppress: false, steadyAim: false, heal: 0, healRange: 1, guardReduce: 0, pen: 0, evac: false, stealth: 0, jamOnClimb: false, ...c }
 }
 
 /** ルールとユニット性能はすべてここ。シミュレーションでは差分を上書きして比較する */
@@ -14,6 +14,7 @@ export const DEFAULT_RULES: RulesConfig = {
     sniper: cls({ id: 'sniper', name: 'スナイパー', kanji: '狙', short: 'S', hp: 16, atk: 20, def: 5, spd: 8, shots: 1, accuracy: 90, falloff: 5, move: 2, range: 6, vision: 5, cost: 3, attackMaxMove: 1, closePenalty: 45, steadyAim: true }),
     scout: cls({ id: 'scout', name: 'スカウト', kanji: '斥', short: 'R', hp: 16, atk: 6, def: 6, spd: 26, shots: 1, accuracy: 90, falloff: 0, move: 4, range: 1, vision: 6, cost: 1, markOnSight: true, sonar: 2 }),
     medic: cls({ id: 'medic', name: '衛生兵', kanji: '衛', short: 'M', hp: 20, atk: 6, def: 8, spd: 16, shots: 1, accuracy: 85, falloff: 8, move: 3, range: 2, vision: 4, cost: 2, heal: 6 }),
+    jammer: cls({ id: 'jammer', name: 'ジャマー', kanji: '妨', short: 'J', hp: 20, atk: 7, def: 8, spd: 16, shots: 1, accuracy: 85, falloff: 8, move: 3, range: 2, vision: 4, cost: 2, jamOnClimb: true }),
     guardian: cls({ id: 'guardian', name: '防護兵', kanji: '護', short: 'D', hp: 30, atk: 8, def: 18, spd: 10, shots: 1, accuracy: 90, falloff: 0, move: 2, range: 1, vision: 3, cost: 2, guardReduce: 0.3 }),
   },
   teamSize: 4,
@@ -25,7 +26,7 @@ export const DEFAULT_RULES: RulesConfig = {
   },
   sharedTargeting: true,
   cover: { fireOverBuildings: false, wallHug: true },
-  skills: { markDuration: 1, markAccBonus: 10, markPerTurn: 99, markCooldown: 0, suppressMove: 1, suppressAcc: 15, steadyAcc: 15, guardHitsPerTurn: 99, guardSameHeight: true, maxPerClass: 2, stealthTrigger: 'descend' },
+  skills: { markDuration: 1, markAccBonus: 10, markPerTurn: 99, markCooldown: 0, suppressMove: 1, suppressAcc: 15, steadyAcc: 15, guardHitsPerTurn: 99, guardSameHeight: true, maxPerClass: 2, stealthTrigger: 'descend', jamVision: 2, jamAcc: 20, jamDuration: 1 },
   vision: { deadZone: true },
   combat: { variance: 0.15, damageScale: 1, formula: 'ratio', armorK: 20, coverModel: 'exposure', coverMax: 40, coverHalf: 25, coverLight: 12, highGround: 10, lowGround: 10, minHit: 5, maxHit: 99, initiativeJitter: 2 },
   attackReveals: true,

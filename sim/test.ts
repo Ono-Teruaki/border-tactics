@@ -242,6 +242,22 @@ const tests: Record<string, () => void> = {
     assert.equal(seen(base), true)
     assert.equal(seen(mergeRules(base, { classes: { scout: { stealth: 3 } } })), false)
   },
+  '妨害: ジャマーが地上から屋上に登った手、見えている敵の視界と命中率が下がる'() {
+    const m = mapOf(['.......', '.#.....', '.......'], [{ x: 1, y: 0 }], [{ x: 5, y: 1 }])
+    const g = createGame(m, rules1, [['jammer'], ['sniper']])
+    const ev = resolveTurn(g, [[mv('0-0', 1, 1)], stay(g, 1)], createRng(1))
+    assert.ok(ev.some((e) => e.type === 'jam' && e.targets.includes('1-0')))
+    const S = unit(g, '1-0')
+    assert.ok(S.jammedUntil >= g.turn)
+    // 命中率が jamAcc だけ下がる
+    const c = DEFAULT_RULES.classes.sniper
+    const a = hitChance(m, DEFAULT_RULES, c, { x: 5, y: 1 }, { x: 2, y: 1 }).chance
+    const b = hitChance(m, DEFAULT_RULES, c, { x: 5, y: 1 }, { x: 2, y: 1 }, { jammed: true }).chance
+    assert.equal(a - b, DEFAULT_RULES.skills.jamAcc)
+    // 屋上に居続けた手は発動しない
+    const ev2 = resolveTurn(g, [[mv('0-0', 1, 1)], stay(g, 1)], createRng(1))
+    assert.ok(!ev2.some((e) => e.type === 'jam'))
+  },
   '屋上の見通しはルールで切れる'() {
     const m = mapOf(['.........', '.#..#....', '.........'], [{ x: 1, y: 1 }], [{ x: 7, y: 1 }])
     const g = createGame(m, mergeRules(rules1, { terrain: { building: { seesOverBlockers: false } } }), [['gunner'], ['scout']])
