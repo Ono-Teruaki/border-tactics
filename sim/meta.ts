@@ -14,9 +14,12 @@ import { allComps, compLabel, playMatch } from './lib.ts'
 type Variant = RulesOverride & { maps?: string[]; ai?: Record<string, Partial<AiParams>> }
 
 function setup(variant: Variant) {
-  const { maps: _m, ai, ...override } = variant
+  const { maps: _m, ai, exclude, ...override } = variant as Variant & { exclude?: string[] }
   for (const [k, v] of Object.entries(ai ?? {})) Object.assign(AI_PRESETS[k], v)
-  return mergeRules(DEFAULT_RULES, override)
+  const rules = mergeRules(DEFAULT_RULES, override)
+  // exclude: 総当たりに入れないクラス（比較用。例: 新クラスを抜いた場で測る）
+  for (const id of exclude ?? []) delete rules.classes[id]
+  return rules
 }
 
 /** [i][j] = 編成 i が j と戦った結果（i 視点）: 勝・分・負・ターン合計 */

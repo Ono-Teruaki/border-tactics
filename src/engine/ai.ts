@@ -195,10 +195,13 @@ function bindValue(ctx: Ctx, u: Unit, pos: Pos): { value: number; target?: strin
   }
   let value = 0
   let target: string | undefined
+  if (!shooters) return { value: 0 }
   for (const e of ctx.known) {
     if (e.age > 0 || !canStrike(map, rules, pos, e.pos, ar, true)) continue
     const ec = classOf(rules, e)
-    const v = (0.4 + 0.45 * shooters) * (ec.cost / 2) * (ec.range > 1 ? 1.3 : 1)
+    // 近接の敵を自陣へ引き込むのは逆効果。射手を引きずり出す
+    if (ec.range <= 1) continue
+    const v = (0.3 + 0.45 * shooters) * (ec.cost / 2)
     if (v > value) (value = v), (target = e.unitId)
   }
   return { value, target }
@@ -281,19 +284,42 @@ function supportValue(ctx: Ctx, u: Unit, pos: Pos): { value: number; at?: Pos } 
   // 妨害でスキルを封じられている間は、回復も庇いもできない
   if (isSilenced(rules, u, ctx.obs.turn)) return { value: 0 }
   const c = classOf(rules, u)
-  // 遮蔽兵: 射程内のマスごとに、フィールドに入る味方（自分も含む）の被弾リスクの合計を比べる
+  // 遮蔽兵: 射程内のマスごとに「敵の射手 → 味方」の射線をどれだけ切れるか（守り）から、
+  // 「味方 → 敵」の射線をどれだけ切ってしまうか（自分たちの攻め）を引いて比べる
   if (c.veil) {
     const { map } = ctx.obs
     const sk = rules.skills
-    const allies = ctx.obs.mine.map((a) => ({ a, ap: a.id === u.id ? pos : (ctx.planned.get(a.id) ?? a.pos) }))
-    const risk = new Map(allies.map(({ a, ap }) => [a.id, threatAt(ctx, classOf(rules, a), a.hp, ap)]))
+    const allies = ctx.obs.mine.map((a) => ({ a, ac: classOf(rules, a), ap: a.id === u.id ? pos : (ctx.planned.get(a.id) ?? a.pos) }))
+    const foes = ctx.known.filter((e) => e.age <= 1).map((e) => ({ e, ec: classOf(rules, e) }))
+    // 今のマップで通っている射線（敵 → 味方の被弾見込み、味方 → 敵の与ダメ見込み）
+    const inLanes: { from: Pos; to: Pos; v: number }[] = []
+    const outLanes: { from: Pos; to: Pos; v: number }[] = []
+    for (const { e, ec } of foes) {
+      if (ec.range <= 1) continue
+      for (const { a, ac, ap } of allies) {
+        if (!canStrike(map, rules, e.pos, ap, attackRange(map, rules, e.cls, e.pos) + ec.move, false, ec.arc)) continue
+        inLanes.push({ from: e.pos, to: ap, v: Math.min(1.5, (expectedDamage(map, rules, ec, ac, e.pos, ap) / Math.max(1, a.hp)) * 3) })
+      }
+    }
+    for (const { a, ac, ap } of allies) {
+      if (ac.range <= 1 || a.id === u.id) continue
+      for (const { e, ec } of foes) {
+        if (!canStrike(map, rules, ap, e.pos, attackRange(map, rules, a.cls, ap), false, ac.arc)) continue
+        outLanes.push({ from: ap, to: e.pos, v: Math.min(1.5, (expectedDamage(map, rules, ac, ec, ap, e.pos) / Math.max(1, e.hp ?? ec.hp)) * 3) })
+      }
+    }
     let best: { value: number; at?: Pos } = { value: 0 }
+    if (!inLanes.length) return best
     for (let y = pos.y - sk.veilRange; y <= pos.y + sk.veilRange; y++)
       for (let x = pos.x - sk.veilRange; x <= pos.x + sk.veilRange; x++) {
         const at = { x, y }
         if (x < 0 || y < 0 || x >= map.width || y >= map.height || dist(pos, at) > sk.veilRange) continue
+        const cells: string[] = []
+        for (let yy = y - sk.veilRadius; yy <= y + sk.veilRadius; yy++) for (let xx = x - sk.veilRadius; xx <= x + sk.veilRadius; xx++) cells.push(`${xx},${yy}`)
+        const vm = { ...map, veil: [...(map.veil ?? []), ...cells] }
         let v = 0
-        for (const { a, ap } of allies) if (Math.abs(ap.x - x) <= sk.veilRadius && Math.abs(ap.y - y) <= sk.veilRadius) v += risk.get(a.id)! * 0.45
+        for (const l of inLanes) if (!lineOfSight(vm, rules, l.from, l.to)) v += l.v * 0.6
+        for (const l of outLanes) if (!lineOfSight(vm, rules, l.from, l.to)) v -= l.v * 0.6
         if (v > best.value) best = { value: v, at }
       }
     return best
@@ -425,7 +451,7 @@ function bestOrder(ctx: Ctx, u: Unit): Order {
   const dest = best ? { ...best.pos } : { ...u.pos }
   // 射程内に見込みがなければ、最も近い視認中の敵を狙っておく（相手が寄ってくれば当たる）。支援役は除く
   let target = best?.target
-  if (!target && !isSupport) {
+  if (!target && !isSupport && !cls.bind) {
     const vis = known.filter((e) => e.age === 0).sort((a, b) => dist(dest, a.pos) - dist(dest, b.pos))
     target = vis[0]?.unitId
   }

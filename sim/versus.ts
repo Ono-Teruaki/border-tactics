@@ -3,20 +3,22 @@
 //     [--ai sim/variants/x.json] [--opp-ai sim/variants/y.json]   CPU の重み（variant の ai.cpu、既定は strong）
 //     [--search] [--opp-search]                                    先読み CPU にする
 //     [--search-opts '{"candidates":10,"evalAdvance":1}'] [--opp-search-opts '{...}']
+//     [--variant sim/variants/x.json]                              ルールの差分
 // 編成は クラスの頭文字（A=アタッカー G=ガンナー S=スナイパー R=スカウト M=衛生兵 J=ジャマー X=擲弾兵 D=防護兵）
 import { readFileSync } from 'node:fs'
 import { AI_PRESETS, decideOrders, type AiParams } from '../src/engine/ai.ts'
 import { createGame, gameResult, observe, resolveTurn } from '../src/engine/game.ts'
 import { CURRENT_MAP_IDS, getMap } from '../src/engine/maps.ts'
 import { createRng } from '../src/engine/rng.ts'
-import { DEFAULT_RULES } from '../src/engine/rules.ts'
+import { DEFAULT_RULES, mergeRules } from '../src/engine/rules.ts'
 import { decideOrdersSearch, SEARCH_GAME, type SearchOpts } from '../src/engine/search.ts'
 import type { Observation, Order, Side } from '../src/engine/types.ts'
 
 const args = process.argv.slice(2)
 const arg = (n: string, d = '') => (args.includes(`--${n}`) ? args[args.indexOf(`--${n}`) + 1] : d)
 const flag = (n: string) => args.includes(`--${n}`)
-const rules = DEFAULT_RULES
+// --variant: ルールの差分（ai と maps は無視）
+const rules = arg('variant') ? mergeRules(DEFAULT_RULES, (({ ai: _a, maps: _m, exclude: _e, ...o }) => o)(JSON.parse(readFileSync(arg('variant'), 'utf8')))) : DEFAULT_RULES
 const byShort = Object.fromEntries(Object.values(rules.classes).map((c) => [c.short, c.id]))
 const comp = (s: string) => [...s].map((ch) => byShort[ch] ?? (() => { throw new Error(`unknown class ${ch}`) })())
 const aiOf = (path: string): AiParams => (path ? { ...AI_PRESETS.strong, ...JSON.parse(readFileSync(path, 'utf8')).ai.cpu } : AI_PRESETS.strong)
