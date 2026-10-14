@@ -86,7 +86,7 @@ export interface RulesConfig {
   terrain: Record<TerrainId, TerrainRule>
   /** true: 味方の誰かが見ている敵を撃てる（索敵が射撃に直結） / false: 自分の目で見えている敵のみ */
   sharedTargeting: boolean
-  /** レーダー塔（マップに radars があるときだけ）。false で無効 */
+  /** レーダー塔（マップに radars があるときだけ）。既定は無効（v0.11.3〜） */
   radar: boolean
   /** レーダー塔で見えた敵にマークも付ける（命中+） */
   radarMark: boolean

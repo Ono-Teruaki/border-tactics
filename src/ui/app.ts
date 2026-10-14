@@ -188,7 +188,8 @@ class Battle {
     this.panel = h('div', { class: 'panel' }) as HTMLDivElement
     this.logEl = h('div', { class: 'log' }) as HTMLDivElement
     root.replaceChildren(h('div', { class: 'battle' }, this.header, stage, this.panel, this.logEl))
-    this.board = new Board3D(stage, map)
+    // レーダー塔を使わないルールなら、塔のアンテナも出さない
+    this.board = new Board3D(stage, rules.radar ? map : { ...map, radars: undefined })
     this.captionEl = h('div', { class: 'caption' }) as HTMLDivElement
     this.captionEl.hidden = true
     stage.append(this.captionEl)
@@ -562,26 +563,33 @@ class Battle {
         const a = classOf(rules, unitOf(e.unitId))
         const hits = e.shots.filter((x) => x.hit).length
         const guarded = e.shots.find((x) => x.guardedBy)?.guardedBy
+        const guardDmg = e.shots.filter((x) => x.guardedBy).reduce((a, x) => a + x.damage, 0)
+        // 防護兵の残りHP（この攻撃の後）。庇って撃破されることがある
+        let guardHp: number | null = null
         if (guarded) {
           if (!isMine(guarded) && !disp.get(guarded)) reveal(guarded, unitOf(guarded).pos)
           const g = disp.get(guarded)
           if (g) {
             this.board.popup(g.pos, '庇う', '#37c3ff', 900)
-            g.hp = Math.max(0, (g.hp ?? unitOf(guarded).hp) - e.shots.filter((x) => x.guardedBy).reduce((a, x) => a + x.damage, 0))
+            g.hp = guardHp = Math.max(0, (g.hp ?? unitOf(guarded).hp) - guardDmg)
           }
         }
         this.caption(
-          `${this.name(e.unitId)}（速${a.spd}）→ ${this.name(e.hitId)}　命中率${e.chance}%${e.cover !== 'none' ? `（ビルに隠れて${e.cover === 'half' ? '大' : '小'}）` : ''}${e.shots.length > 1 ? `　${hits}/${e.shots.length}発` : ''}`,
+          `${this.name(e.unitId)}（速${a.spd}）→ ${this.name(e.hitId)}　命中率${e.chance}%${e.cover !== 'none' ? `（ビルに隠れて${e.cover === 'half' ? '大' : '小'}）` : ''}${e.shots.length > 1 ? `　${hits}/${e.shots.length}発` : ''}${guarded ? `　／ ${this.name(guarded)}が庇った -${guardDmg}${guardHp === 0 ? '（撃破）' : ''}` : ''}`,
         )
         const side = isMine(e.unitId) ? 0 : 1
-        const lethal = e.targetHp <= 0
-        if (Math.abs(e.from.x - e.target.x) + Math.abs(e.from.y - e.target.y) <= 1) {
-          await this.board.meleeStrike(e.unitId, e.from, e.target, side, e.shots, e.hitId, lethal)
+        // 当たった弾がすべて庇われたら、弾は防護兵へ飛ぶ
+        const allGuarded = !!guarded && e.shots.every((x) => !x.hit || x.guardedBy)
+        const to = allGuarded ? (disp.get(guarded!)?.pos ?? unitOf(guarded!).pos) : e.target
+        const toId = allGuarded ? guarded! : e.hitId
+        const lethal = allGuarded ? guardHp === 0 : e.targetHp <= 0
+        if (Math.abs(e.from.x - to.x) + Math.abs(e.from.y - to.y) <= 1) {
+          await this.board.meleeStrike(e.unitId, e.from, to, side, e.shots, toId, lethal)
         } else if (lethal) {
-          await this.board.killShot(e.from, e.target, side, e.shots, e.spotted && isMine(e.unitId), e.hitId)
+          await this.board.killShot(e.from, to, side, e.shots, e.spotted && isMine(e.unitId), toId)
         } else {
-          await this.board.focus([e.from, e.target], 420)
-          await this.board.volley(e.from, e.target, side, e.shots, e.spotted && isMine(e.unitId), e.hitId)
+          await this.board.focus([e.from, to], 420)
+          await this.board.volley(e.from, to, side, e.shots, e.spotted && isMine(e.unitId), toId)
         }
         const t = disp.get(e.hitId)
         if (t) t.hp = e.targetHp
@@ -645,8 +653,9 @@ class Battle {
         if (at) this.board.popup(at, '📡 レーダー', mine ? '#37c3ff' : '#ff5b47', 1000)
         await this.board.wait(600)
       } else if (e.type === 'bailout') {
-        this.caption(`💥 ${this.name(e.unitId)} 撃破`)
-        const killer = [...events].reverse().find((x) => x.type === 'attack' && x.hitId === e.unitId)
+        const killer = [...events].reverse().find((x) => x.type === 'attack' && (x.hitId === e.unitId || x.shots.some((s) => s.guardedBy === e.unitId)))
+        const shielded = killer?.type === 'attack' && killer.hitId !== e.unitId
+        this.caption(`💥 ${this.name(e.unitId)} 撃破${shielded ? `（${this.name(killer.hitId)}を庇って）` : ''}`)
         await this.board.defeat(e.unitId, e.at, isMine(e.unitId) ? 0 : 1, killer?.type === 'attack' ? killer.from : undefined)
         disp.delete(e.unitId)
         show()
@@ -697,7 +706,9 @@ class Battle {
       if (e.type === 'noshot' && u.side === 0) lines.push(`${this.name(e.unitId)}: 撃てず（${BLOCK_LABEL[e.reason]}）`)
       if (e.type === 'attack') {
         const hits = e.shots.filter((x) => x.hit).length
-        lines.push(`${this.name(e.unitId)} → ${this.name(e.hitId)}: ${hits}/${e.shots.length}発命中 -${e.damage}（命中率${e.chance}%）${e.spotted && u.side === 0 ? '［索敵連携］' : ''}`)
+        const g = e.shots.find((x) => x.guardedBy)?.guardedBy
+        const gd = e.shots.filter((x) => x.guardedBy).reduce((a, x) => a + x.damage, 0)
+        lines.push(`${this.name(e.unitId)} → ${this.name(e.hitId)}: ${hits}/${e.shots.length}発命中 -${e.damage}（命中率${e.chance}%）${g ? `［${this.name(g)}が庇って -${gd}］` : ''}${e.spotted && u.side === 0 ? '［索敵連携］' : ''}`)
         for (const s of e.splash ?? []) lines.push(`　爆風: ${this.name(s.id)} -${s.damage}`)
       }
       if (e.type === 'bailout') lines.push(`💥 ${this.name(e.unitId)} 撃破`)
