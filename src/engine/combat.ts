@@ -25,6 +25,51 @@ export function coverFrom(map: MapDef, from: Pos, target: Pos): CoverLevel {
   return 'none'
 }
 
+/**
+ * 撃ち手から見て、対象の体のどれだけがビルに隠れているか（0 = 全身見える、1 = 全部隠れる）。
+ * 対象のマスに、射線と直角に5本の線（体の幅）を引き、撃ち手からそれぞれへの射線が
+ * 途中のビルのマスを通るかを数える。撃ち手・対象のマス自身は数えない
+ */
+const hiddenCache = new WeakMap<MapDef, Map<number, number>>()
+
+export function hiddenFraction(map: MapDef, from: Pos, target: Pos): number {
+  if (dist(from, target) <= 1 || terrainId(map, target) === 'building') return 0
+  // 地形は変わらないので、マップと位置の組ごとに覚えておく
+  let cache = hiddenCache.get(map)
+  if (!cache) hiddenCache.set(map, (cache = new Map()))
+  const k = ((from.x * 64 + from.y) * 64 + target.x) * 64 + target.y
+  const hit = cache.get(k)
+  if (hit !== undefined) return hit
+  const v = computeHidden(map, from, target)
+  cache.set(k, v)
+  return v
+}
+
+function computeHidden(map: MapDef, from: Pos, target: Pos): number {
+  const vx = target.x - from.x
+  const vy = target.y - from.y
+  const len = Math.hypot(vx, vy)
+  const px = -vy / len
+  const py = vx / len
+  const offsets = [-0.36, -0.18, 0, 0.18, 0.36]
+  let blocked = 0
+  for (const o of offsets) {
+    const tx = target.x + px * o
+    const ty = target.y + py * o
+    const steps = Math.ceil(Math.hypot(tx - from.x, ty - from.y) / 0.05)
+    for (let i = 1; i < steps; i++) {
+      const x = Math.round(from.x + ((tx - from.x) * i) / steps)
+      const y = Math.round(from.y + ((ty - from.y) * i) / steps)
+      if ((x === from.x && y === from.y) || (x === target.x && y === target.y)) continue
+      if (inBounds(map, { x, y }) && terrainId(map, { x, y }) === 'building') {
+        blocked++
+        break
+      }
+    }
+  }
+  return blocked / offsets.length
+}
+
 export interface HitOpts {
   /** 撃ち手がこの手で移動していない（狙撃態勢） */
   stationary?: boolean
@@ -35,7 +80,7 @@ export interface HitOpts {
 }
 
 /** 1発あたりの命中率（%）。距離による減衰・懐・遮蔽・高低差・スキル */
-export function hitChance(map: MapDef, rules: RulesConfig, cls: UnitClass, from: Pos, target: Pos, opts: HitOpts = {}): { chance: number; cover: CoverLevel } {
+export function hitChance(map: MapDef, rules: RulesConfig, cls: UnitClass, from: Pos, target: Pos, opts: HitOpts = {}): { chance: number; cover: CoverLevel; coverPenalty: number } {
   const c = rules.combat
   const sk = rules.skills
   const d = dist(from, target)
@@ -45,15 +90,25 @@ export function hitChance(map: MapDef, rules: RulesConfig, cls: UnitClass, from:
   if (steady) p += sk.steadyAcc
   if (opts.marked) p += sk.markAccBonus
   if (opts.suppressed) p -= sk.suppressAcc
-  const cover = coverFrom(map, from, target)
   const coverMul = steady ? 0.5 : 1
-  if (cover === 'half') p -= c.coverHalf * coverMul
-  if (cover === 'light') p -= c.coverLight * coverMul
+  let cover: CoverLevel
+  let coverPenalty = 0
+  if (c.coverModel === 'exposure') {
+    // 隠れている割合に比例して下げる
+    const hidden = hiddenFraction(map, from, target)
+    coverPenalty = Math.round(c.coverMax * hidden * coverMul)
+    cover = hidden >= 0.4 ? 'half' : hidden > 0 ? 'light' : 'none'
+  } else {
+    cover = coverFrom(map, from, target)
+    if (cover === 'half') coverPenalty = c.coverHalf * coverMul
+    if (cover === 'light') coverPenalty = c.coverLight * coverMul
+  }
+  p -= coverPenalty
   const fromRoof = terrainId(map, from) === 'building'
   const toRoof = terrainId(map, target) === 'building'
   if (fromRoof && !toRoof) p += c.highGround
   if (!fromRoof && toRoof && d > 1) p -= c.lowGround
-  return { chance: Math.max(c.minHit, Math.min(c.maxHit, Math.round(p))), cover }
+  return { chance: Math.max(c.minHit, Math.min(c.maxHit, Math.round(p))), cover, coverPenalty: Math.round(coverPenalty) }
 }
 
 /** 1発の基本ダメージ（乱数なし）。式は rules.combat.formula、pen は攻撃側の貫通 */

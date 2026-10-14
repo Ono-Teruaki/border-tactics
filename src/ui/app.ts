@@ -31,7 +31,7 @@ function skillText(c: UnitClass): string {
 const BLOCK_LABEL: Record<StrikeBlock, string> = {
   range: '射程外',
   blocked: '射線上にビル',
-  cover: '遮蔽（ビルに張り付き）',
+  cover: '真下（自分のビルに張り付き）',
   moved: '移動しすぎ',
   unseen: '見失った',
   gone: '既に撃破',
@@ -228,9 +228,9 @@ class Battle {
   predictText(u: Unit, t: Intel): string {
     const c = classOf(rules, u)
     const tc = rules.classes[t.cls]
-    const { chance, cover } = hitChance(this.map, rules, c, this.destOf(u), t.pos)
+    const { chance, coverPenalty } = hitChance(this.map, rules, c, this.destOf(u), t.pos)
     const [lo, hi] = damageRange(rules, c.atk, tc.def, c.pen)
-    const coverText = cover === 'half' ? '（遮蔽:半）' : cover === 'light' ? '（遮蔽:小）' : ''
+    const coverText = coverPenalty > 0 ? `（ビルに隠れて −${coverPenalty}）` : ''
     return `狙い: 敵${tc.name} — 命中率${chance}%${coverText} × ${c.shots}発、1発${lo === hi ? lo : `${lo}〜${hi}`}ダメージ（速${c.spd} vs ${tc.spd}）`
   }
 
@@ -565,7 +565,7 @@ class Battle {
           }
         }
         this.caption(
-          `${this.name(e.unitId)}（速${a.spd}）→ ${this.name(e.hitId)}　命中率${e.chance}%${e.cover !== 'none' ? `（遮蔽:${e.cover === 'half' ? '半' : '小'}）` : ''}${e.shots.length > 1 ? `　${hits}/${e.shots.length}発` : ''}`,
+          `${this.name(e.unitId)}（速${a.spd}）→ ${this.name(e.hitId)}　命中率${e.chance}%${e.cover !== 'none' ? `（ビルに隠れて${e.cover === 'half' ? '大' : '小'}）` : ''}${e.shots.length > 1 ? `　${hits}/${e.shots.length}発` : ''}`,
         )
         const side = isMine(e.unitId) ? 0 : 1
         const lethal = e.targetHp <= 0

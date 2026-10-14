@@ -5,7 +5,7 @@ import { DEFAULT_RULES, mergeRules } from '../src/engine/rules.ts'
 import { createRng, seedStreams } from '../src/engine/rng.ts'
 import { replayRecord, type GameRecord } from '../src/engine/record.ts'
 import { getMap, MAPS } from '../src/engine/maps.ts'
-import { coverFrom, hitChance } from '../src/engine/combat.ts'
+import { coverFrom, hiddenFraction, hitChance } from '../src/engine/combat.ts'
 import { AI_PRESETS, decideOrders } from '../src/engine/ai.ts'
 import type { GameState, MapDef, Order, Pos } from '../src/engine/types.ts'
 
@@ -70,19 +70,24 @@ const tests: Record<string, () => void> = {
     assert.ok(a.type === 'attack' && a.shots.length === 3 && a.shots.every((x) => x.damage === 4))
     assert.equal(unit(g, '1-0').hp, 28 - 12)
   },
-  '命中率: 距離で下がり、隠れ具合でさらに下がる'() {
-    const m = mapOf(['.......', '...#...', '.......'], [{ x: 0, y: 0 }], [{ x: 6, y: 0 }])
+  '命中率: 距離で下がり、撃ち手から見て体が隠れている割合でさらに下がる'() {
+    // (4,3) はビル (3,3) の東に張り付いている
+    const m = mapOf(['.......', '.......', '.......', '...#...', '.......', '.......', '.......'], [{ x: 0, y: 0 }], [{ x: 6, y: 6 }])
     const G = DEFAULT_RULES.classes.gunner
-    assert.equal(hitChance(m, DEFAULT_RULES, G, { x: 0, y: 2 }, { x: 1, y: 2 }).chance, 60) // 隣接は懐デバフ -20
-    assert.equal(hitChance(m, DEFAULT_RULES, G, { x: 0, y: 2 }, { x: 3, y: 2 }).chance, 60)
-    // (4,1) は西側の (3,1) ビルに張り付いている → 西から撃つと half
-    assert.deepEqual(hitChance(m, DEFAULT_RULES, G, { x: 1, y: 1 }, { x: 4, y: 1 }), { chance: 60 - 25 + 0, cover: 'half' })
-    // 南西から: 主方向は西(x)、副方向は南(y) → ビルは西なので half
-    assert.equal(coverFrom(m, { x: 2, y: 2 }, { x: 4, y: 1 }), 'half')
-    // (3,0) は南の (3,1) ビル。西から撃つと副方向にもならない → none / 南西から → light
-    assert.equal(coverFrom(m, { x: 0, y: 0 }, { x: 3, y: 0 }), 'none')
-    assert.equal(coverFrom(m, { x: 1, y: 2 }, { x: 3, y: 0 }), 'half')
-    assert.equal(coverFrom(m, { x: 0, y: 1 }, { x: 3, y: 0 }), 'light')
+    const S = DEFAULT_RULES.classes.sniper
+    const T = { x: 4, y: 3 }
+    assert.equal(hitChance(m, DEFAULT_RULES, G, { x: 4, y: 2 }, T).chance, 60) // 隣接は懐デバフ -20
+    // 真北から: ビルは横にあるだけで全身見える → 隠れペナルティなし（80 - 10×2）
+    assert.equal(hiddenFraction(m, { x: 4, y: 0 }, T), 0)
+    assert.deepEqual(hitChance(m, DEFAULT_RULES, G, { x: 4, y: 0 }, T), { chance: 60, cover: 'none', coverPenalty: 0 })
+    // 北西から: ビルの角に体の一部が隠れる（0.4 → −16）。距離6 → 90 − 25 = 65
+    assert.equal(hiddenFraction(m, { x: 1, y: 0 }, T), 0.4)
+    assert.equal(hitChance(m, DEFAULT_RULES, S, { x: 1, y: 0 }, T).chance, 65 - 16)
+    // 西寄りからはもっと隠れる
+    assert.ok(hiddenFraction(m, { x: 0, y: 1 }, T) > hiddenFraction(m, { x: 1, y: 0 }, T))
+    // 旧方式（隣のビルの向き）なら、北西からは half（−25）
+    const old = mergeRules(DEFAULT_RULES, { combat: { coverModel: 'adjacent' } })
+    assert.equal(hitChance(m, old, S, { x: 1, y: 0 }, T).chance, 65 - 25)
   },
   'ビルは地上同士の視線を遮る'() {
     const m = mapOf(['.......', '...#...', '.......'], [{ x: 0, y: 1 }], [{ x: 5, y: 1 }])
@@ -142,11 +147,11 @@ const tests: Record<string, () => void> = {
     assert.equal(moveOf(g.rules, unit(g, '1-0'), g.turn + 1), 3)
   },
   '狙撃態勢: 動かなければ命中率+15・遮蔽半減'() {
-    const m = mapOf(['.......', '...#...', '.......'], [{ x: 0, y: 0 }], [{ x: 6, y: 0 }])
+    const m = mapOf(['.......', '.......', '.......', '...#...', '.......', '.......', '.......'], [{ x: 0, y: 0 }], [{ x: 6, y: 6 }])
     const S = DEFAULT_RULES.classes.sniper
-    // (4,1) は西の (3,1) ビルに張り付き。距離4 → 90-15=75, 遮蔽半 -25
-    assert.equal(hitChance(m, DEFAULT_RULES, S, { x: 0, y: 1 }, { x: 4, y: 1 }).chance, 50)
-    assert.equal(hitChance(m, DEFAULT_RULES, S, { x: 0, y: 1 }, { x: 4, y: 1 }, { stationary: true }).chance, 78) // 90 - 12.5 → 78
+    // 北西から (4,3) を狙う: 90 − 25 = 65、隠れ 0.4 → −16（態勢なら −8）
+    assert.equal(hitChance(m, DEFAULT_RULES, S, { x: 1, y: 0 }, { x: 4, y: 3 }).chance, 49)
+    assert.equal(hitChance(m, DEFAULT_RULES, S, { x: 1, y: 0 }, { x: 4, y: 3 }, { stationary: true }).chance, 65 + 15 - 8)
   },
   'カバーリング: 支援中の防護兵が隣の味方への命中弾を肩代わり'() {
     const g = createGame(mapOf(open, [{ x: 0, y: 2 }], [{ x: 3, y: 2 }, { x: 4, y: 2 }]), mergeRules(rules2, { teamSize: 2 }), [['sniper', 'sniper'], ['gunner', 'guardian']])
