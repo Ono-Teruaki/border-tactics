@@ -4,10 +4,12 @@ import { attackRange, canFireAfterMove, canSee, canStrike, classOf, isMeleeClass
 import { allPositions, key, samePos, shortestPath, terrainId } from '../engine/grid.ts'
 import { MAPS } from '../engine/maps.ts'
 import { RECORD_VERSION, type GameRecord } from '../engine/record.ts'
-import { seedStreams, type Rng } from '../engine/rng.ts'
+import { createRng, seedStreams, type Rng } from '../engine/rng.ts'
 import { DEFAULT_RULES } from '../engine/rules.ts'
 import type { GameEvent, GameState, Intel, MapDef, Order, Pos, StrikeBlock, Unit, UnitClass, VictoryMode } from '../engine/types.ts'
-import { Board3D, type PieceSpec, type PlanSpec, type TileMark } from './board3d.ts'
+// three.js（盤面の描画）は重いので、出撃するときに読み込む。編成画面はそれを待たずに出る
+import type { Board3D, PieceSpec, PlanSpec, TileMark } from './board3d.ts'
+const loadBoard = () => import('./board3d.ts')
 import { damageRange, hitChance } from '../engine/combat.ts'
 
 const rules = DEFAULT_RULES
@@ -110,9 +112,11 @@ export function showSetup() {
     lastMap = mapId
     const seed = Math.floor(Math.random() * 1e9)
     const cpuComp = seedStreams(seed).setup.pick(CPU_COMPS)
-    new Battle(MAPS.find((m) => m.id === mapId)!, [comp, [...cpuComp]], seed)
+    loadBoard().then(({ Board3D }) => new Battle(Board3D, MAPS.find((m) => m.id === mapId)!, [comp, [...cpuComp]], seed))
   }
   render()
+  // 編成を選んでいる間に、裏で盤面の描画を読み込んでおく
+  void loadBoard()
 }
 
 function miniMap(map: MapDef) {
@@ -175,7 +179,7 @@ class Battle {
   /** 移動の途中で見失った敵の、最後に見えたマス（エンジンの目撃情報より新しいときだけ使う） */
   lastSeen = new Map<string, { pos: Pos; turn: number }>()
 
-  constructor(map: MapDef, comps: [string[], string[]], seed: number) {
+  constructor(BoardClass: typeof Board3D, map: MapDef, comps: [string[], string[]], seed: number) {
     this.map = map
     this.comps = comps
     this.seed = seed
@@ -190,7 +194,7 @@ class Battle {
     this.logEl = h('div', { class: 'log' }) as HTMLDivElement
     root.replaceChildren(h('div', { class: 'battle' }, this.header, stage, this.panel, this.logEl))
     // レーダー塔を使わないルールなら、塔のアンテナも出さない
-    this.board = new Board3D(stage, rules.radar ? map : { ...map, radars: undefined })
+    this.board = new BoardClass(stage, rules.radar ? map : { ...map, radars: undefined })
     this.captionEl = h('div', { class: 'caption' }) as HTMLDivElement
     this.captionEl.hidden = true
     stage.append(this.captionEl)
@@ -207,6 +211,7 @@ class Battle {
 
     this.log(`敵編成: ${comps[1].map((c) => rules.classes[c].name).join('・')}`)
     this.render()
+    this.startCpuThinking()
   }
 
   me() {
@@ -424,17 +429,53 @@ class Battle {
     this.panel.replaceChildren(...children)
   }
 
+  /** CPU の手を考え始める（手番の始めに呼ぶ）。Worker が使えれば別スレッドで、だめならその場で */
+  private cpuWorker: Worker | null = null
+  private cpuPending: Promise<Order[]> | null = null
+  private cpuSeq = 0
+  startCpuThinking() {
+    if (this.state.over) {
+      this.cpuWorker?.terminate()
+      this.cpuWorker = null
+      return
+    }
+    const obs = observe(this.state, 1)
+    const seed = Math.floor(this.aiRng.next() * 2 ** 31)
+    const id = ++this.cpuSeq
+    const local = () => decideOrdersSearch(obs, createRng(seed), AI_PRESETS.strong, SEARCH_GAME)
+    try {
+      this.cpuWorker ??= new Worker(new URL('../engine/cpu.worker.ts', import.meta.url), { type: 'module' })
+      const w = this.cpuWorker
+      this.cpuPending = new Promise<Order[]>((resolve) => {
+        const onMsg = (e: MessageEvent<{ id: number; orders: Order[] }>) => {
+          if (e.data.id !== id) return
+          w.removeEventListener('message', onMsg)
+          resolve(e.data.orders)
+        }
+        w.addEventListener('message', onMsg)
+        w.addEventListener('error', () => resolve(local()), { once: true })
+        w.postMessage({ id, obs, params: AI_PRESETS.strong, opts: SEARCH_GAME, seed })
+      })
+    } catch {
+      this.cpuPending = Promise.resolve(local())
+    }
+  }
+
   async execute() {
     if (this.busy || this.state.over) return
     this.busy = true
     this.selected = null
     const myOrders: Order[] = this.me().map((u) => ({ unitId: u.id, dest: { ...this.destOf(u) }, target: this.orders.get(u.id)?.target }))
-    const cpuOrders = decideOrdersSearch(observe(this.state, 1), this.aiRng, AI_PRESETS.strong, SEARCH_GAME)
+    if (!this.cpuPending) this.startCpuThinking()
+    const cpuOrders = await this.cpuPending!
+    this.cpuPending = null
     this.turns.push([structuredClone(myOrders), structuredClone(cpuOrders)])
     // 解決前の表示状態（プレイヤーが知っている情報だけ）
     const disp = new Map<string, PieceSpec>(this.pieceSpecs(this.shownIntel).map((p) => [p.id, { ...p, selected: false, targeted: false }]))
     const turn = this.state.turn
     const events = resolveTurn(this.state, [myOrders, cpuOrders], this.resolveRng)
+    // 演出を見ている間に、CPU は次の手を考え始める
+    this.startCpuThinking()
     const finalIntel = this.intelMap()
     this.orders.clear()
     this.board.setPlans([])

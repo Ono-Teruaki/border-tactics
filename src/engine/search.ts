@@ -81,6 +81,19 @@ function evaluate(s: GameState, side: Side, opts: SearchOpts): number {
   return v
 }
 
+/** 盤面の複製。マップとルールは共有する（遮蔽のキャッシュがマップ単位なので、複製すると毎回計算し直しになる） */
+function cloneState(s: GameState): GameState {
+  return {
+    ...s,
+    units: s.units.map((u) => ({ ...u, pos: { ...u.pos } })),
+    kills: [...s.kills],
+    killCost: [...s.killCost],
+    intel: [structuredClone(s.intel[0]), structuredClone(s.intel[1])],
+    history: [],
+    radarUntil: s.radarUntil ? [...s.radarUntil] : [0, 0],
+  }
+}
+
 const ordersKey = (o: Order[]) => o.map((x) => `${x.unitId}:${x.dest.x},${x.dest.y}>${x.target ?? ''}`).join('|')
 
 export function decideOrdersSearch(obs: Observation, rng: Rng, params: AiParams, opts: SearchOpts = SEARCH_DEFAULT): Order[] {
@@ -119,7 +132,7 @@ export function decideOrdersSearch(obs: Observation, rng: Rng, params: AiParams,
     for (const r of replies) {
       let sum = 0
       for (let roll = 0; roll < opts.rolls; roll++) {
-        const sim = structuredClone(base)
+        const sim = cloneState(base)
         const simRng = createRng(Math.floor(rng.next() * 2 ** 31))
         resolveTurn(sim, (me === 0 ? [c, r] : [r, c]) as [Order[], Order[]], simRng)
         if (opts.depth === 2 && !sim.over) {

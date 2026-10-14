@@ -368,7 +368,7 @@ function bestOrder(ctx: Ctx, u: Unit): Order {
       p.aggression * (action + progress) - p.caution * threat * 0.6 + p.scouting * scout + p.roofPref * roof + p.rush * rush + p.evade * evade + cohesion + (p.jam ?? 1) * jam + (p.radar ?? 1) * radar + rng.next() * p.noise
     if (!best || score > best.score) best = { score, pos, target: sup > fire.value * (p.fireWeight ?? 1.5) ? undefined : fire.target }
   }
-  const dest = best?.pos ?? { ...u.pos }
+  const dest = best ? { ...best.pos } : { ...u.pos }
   // 射程内に見込みがなければ、最も近い視認中の敵を狙っておく（相手が寄ってくれば当たる）。支援役は除く
   let target = best?.target
   if (!target && !isSupport) {
