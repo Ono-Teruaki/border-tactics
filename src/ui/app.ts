@@ -1,4 +1,5 @@
 import { AI_PRESETS, CPU_COMPS, decideOrders } from '../engine/ai.ts'
+import { decideOrdersSearch, SEARCH_GAME } from '../engine/search.ts'
 import { attackRange, canFireAfterMove, canSee, canStrike, classOf, isMeleeClass, createGame, gameResult, observe, reachableFor, resolveTurn, strikeCheck } from '../engine/game.ts'
 import { allPositions, key, samePos, shortestPath, terrainId } from '../engine/grid.ts'
 import { MAPS } from '../engine/maps.ts'
@@ -428,7 +429,7 @@ class Battle {
     this.busy = true
     this.selected = null
     const myOrders: Order[] = this.me().map((u) => ({ unitId: u.id, dest: { ...this.destOf(u) }, target: this.orders.get(u.id)?.target }))
-    const cpuOrders = decideOrders(observe(this.state, 1), this.aiRng, AI_PRESETS.strong)
+    const cpuOrders = decideOrdersSearch(observe(this.state, 1), this.aiRng, AI_PRESETS.strong, SEARCH_GAME)
     this.turns.push([structuredClone(myOrders), structuredClone(cpuOrders)])
     // 解決前の表示状態（プレイヤーが知っている情報だけ）
     const disp = new Map<string, PieceSpec>(this.pieceSpecs(this.shownIntel).map((p) => [p.id, { ...p, selected: false, targeted: false }]))
