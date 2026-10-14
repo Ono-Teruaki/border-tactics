@@ -34,6 +34,7 @@ body {
   border-radius: 18px;
 }
 .turn {
+  white-space: nowrap;
   font-weight: 800;
   font-size: 18px;
 }
@@ -205,4 +206,39 @@ body.paper {
   background: #2b2620;
   color: #f3ead7;
   border-radius: 4px;
+}
+
+/* ---------- ★ ホロ＋ ---------- */
+body.holo2 {
+  background: #0d1b2e;
+  color: #e3f4ff;
+}
+.holo2 .score .me {
+  color: #37c3ff;
+}
+.holo2 .score .en {
+  color: #ff5b47;
+}
+.holo2 #themes a.on {
+  background: #1c3a5a;
+  color: #9be8ff;
+}
+.holo2 .bottom {
+  background: rgba(14, 30, 50, 0.82);
+  border: 1px solid #2c6a94;
+  box-shadow: 0 10px 30px #0008;
+  backdrop-filter: blur(8px);
+}
+.holo2 .badge {
+  background: #37c3ff;
+  color: #fff;
+  box-shadow: 0 0 14px #37c3ff88;
+}
+.holo2 .odds b {
+  color: #ffd25a;
+}
+.holo2 .go {
+  background: #37c3ff;
+  color: #06223a;
+  box-shadow: 0 0 16px #37c3ff77;
 }

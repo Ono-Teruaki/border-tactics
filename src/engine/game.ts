@@ -52,21 +52,26 @@ export function canSee(map: MapDef, rules: RulesConfig, cls: string, at: Pos, ta
   return true
 }
 
+/** 近接クラス（素の射程が1）。隣接した相手への攻撃は、射撃ではなく近接攻撃になる */
+export const isMeleeClass = (rules: RulesConfig, cls: string) => rules.classes[cls].range === 1
+
 /**
- * 射撃の可否（射程・射線・遮蔽）。視界とは別物:
+ * 攻撃の可否（射程・射線・遮蔽）。視界とは別物:
  * - 射線上にビルがあれば撃てない（屋上からでも。fireOverBuildings で緩和）
- * - 屋上から、撃ち手側のビルに張り付いている地上の敵は撃てない（真下は狙えない）
+ * - 屋上から、撃ち手側のビルに張り付いている地上の敵は撃てない（真下は狙えない）。
+ *   これは射撃だけの制限で、近接クラスが隣接した敵を攻撃するときはかからない
  */
-export function strikeCheck(map: MapDef, rules: RulesConfig, at: Pos, target: Pos, range: number): StrikeBlock | null {
-  if (dist(at, target) > range) return 'range'
+export function strikeCheck(map: MapDef, rules: RulesConfig, at: Pos, target: Pos, range: number, melee = false): StrikeBlock | null {
+  const d = dist(at, target)
+  if (d > range) return 'range'
   const fromRoof = terrainId(map, at) === 'building'
   if (!lineOfSight(map, rules, at, target, fromRoof && rules.cover.fireOverBuildings)) return 'blocked'
-  if (rules.cover.wallHug && fromRoof && isWallHugging(map, at, target)) return 'cover'
+  if (rules.cover.wallHug && fromRoof && !(melee && d === 1) && isWallHugging(map, at, target)) return 'cover'
   return null
 }
 
-export function canStrike(map: MapDef, rules: RulesConfig, at: Pos, target: Pos, range: number): boolean {
-  return strikeCheck(map, rules, at, target, range) === null
+export function canStrike(map: MapDef, rules: RulesConfig, at: Pos, target: Pos, range: number, melee = false): boolean {
+  return strikeCheck(map, rules, at, target, range, melee) === null
 }
 
 /** target（地上）が、撃ち手 from の方向に面したビルに張り付いているか（主方向の隣接マスがビル） */
@@ -254,7 +259,7 @@ export function resolveTurn(state: GameState, orders: [Order[], Order[]], rng: R
     else if (!t || !t.alive) reason = 'gone'
     else if (dist(origin.get(u.id)!, u.pos) > cls.attackMaxMove) reason = 'moved'
     else if (!(rules.sharedTargeting ? teamVis[u.side].has(t.id) : canSee(map, rules, u.cls, u.pos, t.pos))) reason = 'unseen'
-    else reason = strikeCheck(map, rules, u.pos, t.pos, attackRange(map, rules, u.cls, u.pos))
+    else reason = strikeCheck(map, rules, u.pos, t.pos, attackRange(map, rules, u.cls, u.pos), isMeleeClass(rules, u.cls))
     if (reason || !t) {
       events.push({ type: 'noshot', unitId: u.id, targetId, reason: reason ?? 'gone' })
       continue

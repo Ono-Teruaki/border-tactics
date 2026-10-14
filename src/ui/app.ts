@@ -1,6 +1,6 @@
 import { AI_PRESETS, CPU_COMPS, decideOrders } from '../engine/ai.ts'
-import { attackRange, canFireAfterMove, canSee, canStrike, classOf, createGame, gameResult, observe, reachableFor, resolveTurn, strikeCheck } from '../engine/game.ts'
-import { allPositions, key, samePos, terrainId } from '../engine/grid.ts'
+import { attackRange, canFireAfterMove, canSee, canStrike, classOf, isMeleeClass, createGame, gameResult, observe, reachableFor, resolveTurn, strikeCheck } from '../engine/game.ts'
+import { allPositions, key, samePos, shortestPath, terrainId } from '../engine/grid.ts'
 import { MAPS } from '../engine/maps.ts'
 import { RECORD_VERSION, type GameRecord } from '../engine/record.ts'
 import { seedStreams, type Rng } from '../engine/rng.ts'
@@ -165,6 +165,8 @@ class Battle {
   resolveRng: Rng
   /** 直前に表示した敵情報（演出中のHP表示に使う。プレイヤーが既に知っている情報のみ） */
   shownIntel: Record<string, Intel> = {}
+  /** 移動の途中で見失った敵の、最後に見えたマス（エンジンの目撃情報より新しいときだけ使う） */
+  lastSeen = new Map<string, { pos: Pos; turn: number }>()
 
   constructor(map: MapDef, comps: [string[], string[]], seed: number) {
     this.map = map
@@ -217,7 +219,7 @@ class Battle {
     if (!t) return null
     const d = this.destOf(u)
     if (!canFireAfterMove(rules, u, d)) return 'moved'
-    return strikeCheck(this.map, rules, d, t.pos, attackRange(this.map, rules, u.cls, d))
+    return strikeCheck(this.map, rules, d, t.pos, attackRange(this.map, rules, u.cls, d), isMeleeClass(rules, u.cls))
   }
 
   /** 敵が留まった場合の命中率・ダメージ予測 */
@@ -277,7 +279,9 @@ class Battle {
     const selTarget = this.selected ? this.orders.get(this.selected)?.target : undefined
     for (const i of Object.values(intel)) {
       const c = rules.classes[i.cls]
-      const age = s.turn - 1 - i.turn
+      const lost = this.lastSeen.get(i.unitId)
+      const seenTurn = !i.visible && lost && lost.turn >= i.turn ? lost.turn : i.turn
+      const age = s.turn - 1 - seenTurn
       specs.push({
         id: i.unitId,
         side: 1,
@@ -286,13 +290,23 @@ class Battle {
         targeted: !hpOverride && i.unitId === selTarget,
         hp: i.visible ? i.hp : null,
         maxHp: c.hp,
-        pos: i.pos,
+        pos: !i.visible && lost && lost.turn >= i.turn ? lost.pos : i.pos,
         ghost: !i.visible,
         marked: !!i.marked,
-        label: i.visible ? undefined : i.turn === 0 ? '初期位置' : age <= 0 ? '直前' : `${age}手前`,
+        label: i.visible ? undefined : seenTurn === 0 ? '初期位置' : age <= 0 ? '直前' : `${age}手前`,
       })
     }
-    return specs
+    return hideCoveredGhosts(specs)
+  }
+
+  /** 自軍の駒の位置から見えないマスを霧にする */
+  fogMarks(mine: { cls: string; pos: Pos }[], marks = new Map<string, Set<TileMark>>()) {
+    for (const p of allPositions(this.map)) {
+      if (mine.some((u) => samePos(u.pos, p) || canSee(this.map, rules, u.cls, u.pos, p))) continue
+      if (!marks.has(key(p))) marks.set(key(p), new Set())
+      marks.get(key(p))!.add('fog')
+    }
+    return marks
   }
 
   intelMap(): Record<string, Intel> {
@@ -327,9 +341,7 @@ class Battle {
       marks.get(k)!.add(m)
     }
     const mine = this.me()
-    for (const p of allPositions(this.map)) {
-      if (!mine.some((u) => samePos(u.pos, p) || canSee(this.map, rules, u.cls, u.pos, p))) mark(p, 'fog')
-    }
+    this.fogMarks(mine, marks)
     const sel = mine.find((u) => u.id === this.selected)
     if (sel) {
       for (const { pos } of reachableFor(this.map, rules, sel, this.state.turn).values()) mark(pos, 'reach')
@@ -337,7 +349,7 @@ class Battle {
       if (canFireAfterMove(rules, sel, dest)) {
         const ar = attackRange(this.map, rules, sel.cls, dest)
         for (const p of allPositions(this.map)) {
-          if (!samePos(p, dest) && canStrike(this.map, rules, dest, p, ar)) mark(p, marks.get(key(p))?.has('reach') ? 'reachRange' : 'range')
+          if (!samePos(p, dest) && canStrike(this.map, rules, dest, p, ar, isMeleeClass(rules, sel.cls))) mark(p, marks.get(key(p))?.has('reach') ? 'reachRange' : 'range')
         }
       }
       mark(dest, 'dest')
@@ -415,10 +427,10 @@ class Battle {
     const finalIntel = this.intelMap()
     this.orders.clear()
     this.board.setPlans([])
-    this.board.setMarks(new Map())
+    this.board.setMarks(this.fogMarks(this.state.units.filter((u) => u.side === 0 && disp.has(u.id)).map((u) => ({ cls: u.cls, pos: disp.get(u.id)!.pos }))))
     this.board.speed = this.playSpeed
     this.renderPlaybackPanel()
-    const show = () => this.board.syncPieces([...disp.values()])
+    const show = () => this.board.syncPieces(hideCoveredGhosts([...disp.values()]))
     show()
 
     const unitOf = (id: string) => this.state.units.find((x) => x.id === id)!
@@ -432,19 +444,84 @@ class Battle {
       disp.set(id, { id, side: 1, cls: u.cls, letter: c.short, hp: cur?.hp ?? null, maxHp: c.hp, pos: cur?.pos ?? pos, ghost: false })
     }
 
-    // ① 移動：味方 → 見えた敵 の順に1体ずつ。干渉（弾かれ）は最後にまとめて同時に見せる
+    // ① 移動：味方 → 見えた敵 の順に1体ずつ。行き先に別の駒がまだいるときは、そちらを先に動かす（駒を重ねない）。
+    // 敵は視界の中を通る部分だけ見せる：視界から出る瞬間に消え、視界に入る瞬間に現れる。
+    // 干渉（弾かれ）は最後にまとめて同時に見せる
     const moves = events.filter((e): e is Extract<GameEvent, { type: 'move' | 'pursuit' }> => e.type === 'move' || e.type === 'pursuit')
-    const shownMoves = [...moves.filter((e) => isMine(e.unitId)), ...moves.filter((e) => !isMine(e.unitId) && enemySeen(e.unitId))]
-    for (const e of shownMoves) {
-      if (!isMine(e.unitId)) {
-        reveal(e.unitId, e.from)
-        show()
+    const downNow = new Set(events.filter((e) => e.type === 'bailout').map((e) => e.unitId))
+    // 移動の時点の自軍の視界（この手で撃破される味方も、移動の時点では生きている）
+    const myAfter = this.state.units.filter((u) => u.side === 0 && (u.alive || downNow.has(u.id)))
+    const seenAfter = (p: Pos) => myAfter.some((u) => samePos(u.pos, p) || canSee(this.map, rules, u.cls, u.pos, p))
+    interface MoveAnim {
+      id: string
+      mine: boolean
+      path: Pos[]
+      pursuit: boolean
+      fadeIn?: boolean
+      /** 視界から出たときの、最後に見えたマス */
+      lostAt?: Pos
+    }
+    const anims: MoveAnim[] = []
+    for (const e of moves) {
+      const path = shortestPath(this.map, rules, e.from, e.to)
+      const base = { id: e.unitId, mine: isMine(e.unitId), path, pursuit: e.type === 'pursuit' }
+      if (base.mine) {
+        anims.push(base)
+        continue
       }
-      const from = disp.get(e.unitId)!.pos
-      this.caption(`${this.name(e.unitId)} ${e.type === 'pursuit' ? '追撃！' : '移動'}`)
-      await this.board.focus([from, e.to], 380)
-      await this.board.movePiece(e.unitId, e.to)
-      disp.get(e.unitId)!.pos = e.to
+      const marked = !!this.shownIntel[e.unitId]?.marked
+      const vis = path.map((p, i) => (i === 0 ? !!this.shownIntel[e.unitId]?.visible : marked || seenAfter(p)))
+      const n = path.length - 1
+      if (vis[0]) {
+        let k = 0
+        while (k < n && vis[k + 1]) k++
+        anims.push(k === n ? base : { ...base, path: path.slice(0, k + 2), lostAt: path[k] })
+      } else if (vis[n]) {
+        let j = n
+        while (j > 1 && vis[j - 1]) j--
+        anims.push({ ...base, path: path.slice(j - 1), fadeIn: true })
+      }
+    }
+    // 移動前に見えている駒が占めているマス
+    const occupied = (a: MoveAnim) => (a.fadeIn ? null : a.path[0])
+    let pending = anims
+    while (pending.length) {
+      const blocker = (a: MoveAnim) => pending.find((b) => b !== a && occupied(b) && samePos(occupied(b)!, a.path[a.path.length - 1]))
+      const ready = pending.find((a) => !blocker(a))
+      let batch: MoveAnim[]
+      if (ready) batch = [ready]
+      else {
+        // 入れ替わり（循環）は同時に動かす
+        batch = []
+        for (let cur: MoveAnim | undefined = pending[0]; cur && !batch.includes(cur); cur = blocker(cur)) batch.push(cur)
+      }
+      pending = pending.filter((a) => !batch.includes(a))
+      for (const a of batch) {
+        if (a.mine) continue
+        const u = unitOf(a.id)
+        const c = classOf(rules, u)
+        const cur = disp.get(a.id)
+        disp.set(a.id, { id: a.id, side: 1, cls: u.cls, letter: c.short, hp: cur?.ghost ? (this.shownIntel[a.id]?.hp ?? null) : (cur?.hp ?? null), maxHp: c.hp, pos: a.path[0], ghost: false, marked: cur?.marked })
+      }
+      show()
+      for (const a of batch) if (a.fadeIn) this.board.setPieceOpacity(a.id, 0)
+      this.caption(
+        batch.map((a) => `${this.name(a.id)} ${a.fadeIn ? '発見' : a.lostAt ? '視界の外へ' : a.pursuit ? '追撃！' : '移動'}`).join('・'),
+      )
+      await this.board.focus(batch.flatMap((a) => (a.fadeIn ? a.path.slice(1) : a.lostAt ? a.path.slice(0, -1) : a.path)), 380)
+      await Promise.all(batch.map((a) => this.board.movePath(a.id, a.path, { fadeIn: a.fadeIn, fadeOut: !!a.lostAt })))
+      for (const a of batch) {
+        const d = disp.get(a.id)!
+        if (a.lostAt) {
+          // 見失った：最後に見えたマスに「直前」の印を残す
+          disp.set(a.id, { ...d, pos: a.lostAt, ghost: true, hp: null, label: '直前', marked: false })
+          this.lastSeen.set(a.id, { pos: a.lostAt, turn: turn + 1 })
+        } else d.pos = a.path[a.path.length - 1]
+      }
+      show()
+      if (batch.some((a) => a.mine)) {
+        this.board.setMarks(this.fogMarks(this.state.units.filter((u) => u.side === 0 && disp.has(u.id)).map((u) => ({ cls: u.cls, pos: disp.get(u.id)!.pos }))))
+      }
     }
     const bounces = events.filter(
       (e): e is Extract<GameEvent, { type: 'bounce' }> => e.type === 'bounce' && (isMine(e.unitId) || e.contact || enemySeen(e.unitId)),
@@ -628,4 +705,9 @@ class Battle {
     )
     document.body.append(modal)
   }
+}
+
+/** 自軍・見えている敵がいるマスの「最後に見た位置」の印は描かない（駒を重ねない。その情報はもう古い） */
+function hideCoveredGhosts(specs: PieceSpec[]): PieceSpec[] {
+  return specs.filter((p) => !p.ghost || !specs.some((q) => !q.ghost && samePos(q.pos, p.pos)))
 }

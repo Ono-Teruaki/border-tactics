@@ -200,6 +200,14 @@ const tests: Record<string, () => void> = {
     resolveTurn(g3, [stay(g3, 0, '1-0'), stay(g3, 1)], createRng(1))
     assert.equal(unit(g3, '1-0').hp, 16)
   },
+  '張り付きの制限は射撃だけ。近接クラスは屋上から真下の敵を攻撃できる'() {
+    const m = mapOf(['.#.....', '.......'], [{ x: 1, y: 0 }], [{ x: 2, y: 0 }])
+    const g = createGame(m, rules1, [['attacker'], ['gunner']])
+    const hp0 = unit(g, '1-0').hp
+    const ev = resolveTurn(g, [stay(g, 0, '1-0'), stay(g, 1)], createRng(1))
+    assert.ok(!ev.some((e) => e.type === 'noshot'))
+    assert.ok(unit(g, '1-0').hp < hp0)
+  },
   '屋上の見通しはルールで切れる'() {
     const m = mapOf(['.........', '.#..#....', '.........'], [{ x: 1, y: 1 }], [{ x: 7, y: 1 }])
     const g = createGame(m, mergeRules(rules1, { terrain: { building: { seesOverBlockers: false } } }), [['gunner'], ['scout']])

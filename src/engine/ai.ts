@@ -1,5 +1,5 @@
 import { expectedDamage } from './combat.ts'
-import { attackRange, canSee, canStrike, chebyshev, classOf, reachableFor, visionRange } from './game.ts'
+import { attackRange, canSee, canStrike, isMeleeClass, chebyshev, classOf, reachableFor, visionRange } from './game.ts'
 import { dist, key, lineOfSight, samePos, terrain, terrainId } from './grid.ts'
 import type { Rng } from './rng.ts'
 import type { Intel, Observation, Order, Pos, Unit, UnitClass } from './types.ts'
@@ -112,7 +112,7 @@ function fireValue(ctx: Ctx, u: Unit, pos: Pos): { value: number; target?: strin
   for (const e of ctx.known) {
     if (e.age > 0) continue
     // 追撃持ちは、敵が多少動いても届く前提で見積もる
-    const reach = cls.pursuit ? dist(pos, e.pos) <= cls.move + 1 : canStrike(map, rules, pos, e.pos, ar)
+    const reach = cls.pursuit ? dist(pos, e.pos) <= cls.move + 1 : canStrike(map, rules, pos, e.pos, ar, isMeleeClass(rules, u.cls))
     if (!reach) continue
     const ec = classOf(rules, e)
     const hp = e.hp ?? ec.hp
