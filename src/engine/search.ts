@@ -19,6 +19,12 @@ export interface SearchOpts {
   depth: 1 | 2
   /** 応手のうち最悪の結果をどれだけ重く見るか（0 = 平均、1 = 最悪） */
   worst: number
+  /** 評価: 撃破コスト1あたりの点（既定 10） */
+  evalKill?: number
+  /** 評価: 残りHP（HP割合 × コスト）の重み（既定 2）。大きいほど被弾を嫌う */
+  evalHp?: number
+  /** 評価: 敵に近づいた分の点（味方と最寄りの敵の距離の平均が1縮むごと。既定 0）。正で前に出る、負で下がる */
+  evalAdvance?: number
 }
 
 export const SEARCH_DEFAULT: SearchOpts = { candidates: 6, replies: 3, rolls: 2, depth: 2, worst: 0.3 }
@@ -54,14 +60,23 @@ function hypothetical(obs: Observation): GameState {
 }
 
 /** side から見た盤面の評価。撃破コストの差が主、残りHP（コスト重み）が従 */
-function evaluate(s: GameState, side: Side): number {
+function evaluate(s: GameState, side: Side, opts: SearchOpts): number {
   const en = 1 - side
-  let v = (s.killCost[side] - s.killCost[en]) * 10
+  let v = (s.killCost[side] - s.killCost[en]) * (opts.evalKill ?? 10)
+  const hpW = opts.evalHp ?? 2
   for (const u of s.units) {
     if (!u.alive) continue
     const c = s.rules.classes[u.cls]
-    const w = (u.hp / c.hp) * c.cost * 2
+    const w = (u.hp / c.hp) * c.cost * hpW
     v += u.side === side ? w : -w
+  }
+  if (opts.evalAdvance) {
+    const mine = s.units.filter((u) => u.alive && u.side === side)
+    const foes = s.units.filter((u) => u.alive && u.side !== side)
+    if (mine.length && foes.length) {
+      const avg = mine.reduce((a, u) => a + Math.min(...foes.map((e) => Math.abs(e.pos.x - u.pos.x) + Math.abs(e.pos.y - u.pos.y))), 0) / mine.length
+      v -= avg * opts.evalAdvance
+    }
   }
   return v
 }
@@ -111,7 +126,7 @@ export function decideOrdersSearch(obs: Observation, rng: Rng, params: AiParams,
           const next = ([0, 1] as Side[]).map((s) => decideOrders(observe(sim, s), simRng, params)) as [Order[], Order[]]
           resolveTurn(sim, next, simRng)
         }
-        sum += evaluate(sim, me)
+        sum += evaluate(sim, me, opts)
       }
       vals.push(sum / opts.rolls)
     }
