@@ -51,6 +51,10 @@ export interface UnitClass {
    * 自分の移動先の隣（敵から一番遠い空きマス）へ引っ張ってくる。そのあと通常どおり回復する
    */
   evac: boolean
+  /** 曲射（擲弾兵）: 山なりに撃つので、射線上のビル・遮蔽・張り付きの制限を受けない（見えている必要はある） */
+  arc: boolean
+  /** 爆風（擲弾兵）: 命中したら、狙った敵の上下左右にいる敵にも、この割合のダメージ（0 = なし）。爆発は防護兵が庇えない */
+  blast: number
   /** 隠密: 条件（skills.stealthTrigger）を満たした手と次の手、敵がこのユニットを見つけられる距離をこの値だけ下げる（透視は別） */
   stealth: number
   move: number
@@ -231,6 +235,8 @@ export type GameEvent =
       /** 攻撃後の対象HP */
       targetHp: number
       spotted: boolean
+      /** 爆風で巻き込んだ敵 */
+      splash?: { id: string; damage: number; hp: number }[]
     }
   /** 狙ったが撃てなかった */
   | { type: 'noshot'; unitId: string; targetId: string; reason: StrikeBlock }

@@ -224,6 +224,24 @@ const tests: Record<string, () => void> = {
     // 自分のビルの真下は撃てない
     assert.equal(strikeCheck(m, DEFAULT_RULES, { x: 0, y: 0 }, { x: 1, y: 0 }, 8), 'cover')
   },
+  '擲弾兵の曲射はビル越しに届き、爆風で上下左右の敵も巻き込む'() {
+    const m = mapOf(['...#...', '.......', '.......'], [{ x: 1, y: 0 }], [{ x: 5, y: 0 }])
+    assert.equal(strikeCheck(m, DEFAULT_RULES, { x: 1, y: 0 }, { x: 5, y: 0 }, 4), 'blocked')
+    assert.equal(strikeCheck(m, DEFAULT_RULES, { x: 1, y: 0 }, { x: 5, y: 0 }, 4, false, true), null)
+    // 爆風: 狙った敵(4,1)の上(4,0)の敵にも 60%。斜め(5,2)は巻き込まない
+    const g = createGame(mapOf(open, [{ x: 0, y: 1 }, { x: 0, y: 2 }, { x: 0, y: 3 }], [{ x: 6, y: 1 }, { x: 6, y: 2 }, { x: 6, y: 3 }]), mergeRules(DET, { teamSize: 3 }), [['grenadier', 'scout', 'scout'], ['scout', 'gunner', 'gunner']])
+    unit(g, '0-0').pos = { x: 1, y: 1 }
+    unit(g, '1-0').pos = { x: 4, y: 1 }
+    unit(g, '1-1').pos = { x: 4, y: 0 }
+    unit(g, '1-2').pos = { x: 5, y: 2 }
+    const ev = resolveTurn(g, [[mv('0-0', 1, 1, '1-0'), mv('0-1', 0, 2), mv('0-2', 0, 3)], stay(g, 1)], createRng(1))
+    const a = ev.find((e) => e.type === 'attack' && e.unitId === '0-0')
+    assert.ok(a && a.type === 'attack')
+    assert.equal(unit(g, '1-0').hp, 16 - 8) // round(12²/(12+6)) = 8
+    assert.equal(unit(g, '1-1').hp, 22 - 4) // round(round(12²/(12+8)) × 0.6) = round(7 × 0.6) = 4
+    assert.equal(unit(g, '1-2').hp, 22)
+    assert.deepEqual(a.splash?.map((x) => x.id), ['1-1'])
+  },
   '張り付きの制限は射撃だけ。近接クラスは屋上から真下の敵を攻撃できる'() {
     const m = mapOf(['.#.....', '.......'], [{ x: 1, y: 0 }], [{ x: 2, y: 0 }])
     const g = createGame(m, rules1, [['attacker'], ['gunner']])

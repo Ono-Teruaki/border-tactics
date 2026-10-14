@@ -24,6 +24,8 @@ function skillText(c: UnitClass): string {
   if (c.jamOnClimb) t.push(`妨害: 地上から屋上に登った手、見えている敵の視界-${rules.skills.jamVision}・命中率-${rules.skills.jamAcc}（次の手まで）`)
   if (c.evac) t.push('後送: 狙わない手は、移動前に隣にいた一番傷の深い味方を交戦の後で自分の隣へ連れ戻す')
   if (c.stealth) t.push(`隠密: ${rules.skills.stealthTrigger === 'descend' ? '屋上から降りた手' : '狙わない手'}と次の手は、敵から見つかる距離-${c.stealth}`)
+  if (c.arc) t.push('曲射: ビル越しに撃て、遮蔽を無視する（味方が見ている敵なら狙える）')
+  if (c.blast) t.push(`爆風: 当たると、狙った敵の上下左右の敵にも${Math.round(c.blast * 100)}%のダメージ。防護兵は庇えない`)
   if (c.guardReduce) t.push(`カバーリング: 狙わない手は周囲8マスの味方の被弾を肩代わり（-${Math.round(c.guardReduce * 100)}%）`)
   if (c.closePenalty) t.push(`懐に弱い: 隣接した敵への命中-${c.closePenalty}`)
   return t.join(' ／ ')
@@ -222,7 +224,7 @@ class Battle {
     if (!t) return null
     const d = this.destOf(u)
     if (!canFireAfterMove(rules, u, d)) return 'moved'
-    return strikeCheck(this.map, rules, d, t.pos, attackRange(this.map, rules, u.cls, d), isMeleeClass(rules, u.cls))
+    return strikeCheck(this.map, rules, d, t.pos, attackRange(this.map, rules, u.cls, d), isMeleeClass(rules, u.cls), classOf(rules, u).arc)
   }
 
   /** 敵が留まった場合の命中率・ダメージ予測 */
@@ -353,7 +355,7 @@ class Battle {
       if (canFireAfterMove(rules, sel, dest)) {
         const ar = attackRange(this.map, rules, sel.cls, dest)
         for (const p of allPositions(this.map)) {
-          if (!samePos(p, dest) && canStrike(this.map, rules, dest, p, ar, isMeleeClass(rules, sel.cls))) mark(p, marks.get(key(p))?.has('reach') ? 'reachRange' : 'range')
+          if (!samePos(p, dest) && canStrike(this.map, rules, dest, p, ar, isMeleeClass(rules, sel.cls), classOf(rules, sel).arc)) mark(p, marks.get(key(p))?.has('reach') ? 'reachRange' : 'range')
         }
       }
       mark(dest, 'dest')
@@ -580,6 +582,15 @@ class Battle {
         }
         const t = disp.get(e.hitId)
         if (t) t.hp = e.targetHp
+        // 爆風で巻き込んだ敵
+        for (const s of e.splash ?? []) {
+          if (!isMine(s.id) && !disp.get(s.id)) reveal(s.id, unitOf(s.id).pos)
+          const d = disp.get(s.id)
+          if (!d) continue
+          d.hp = s.hp
+          this.board.popup(d.pos, `爆風 -${s.damage}`, '#ffb347', 900)
+        }
+        if (e.splash?.length) await this.board.shake(260, 0.8)
         show()
       } else if (e.type === 'mark' && isMine(e.unitId)) {
         this.caption(`${this.name(e.unitId)} 観測：${e.targets.map((t) => this.name(t)).join('・')} をマーク`)
@@ -678,6 +689,7 @@ class Battle {
       if (e.type === 'attack') {
         const hits = e.shots.filter((x) => x.hit).length
         lines.push(`${this.name(e.unitId)} → ${this.name(e.hitId)}: ${hits}/${e.shots.length}発命中 -${e.damage}（命中率${e.chance}%）${e.spotted && u.side === 0 ? '［索敵連携］' : ''}`)
+        for (const s of e.splash ?? []) lines.push(`　爆風: ${this.name(s.id)} -${s.damage}`)
       }
       if (e.type === 'bailout') lines.push(`💥 ${this.name(e.unitId)} 撃破`)
       if (e.type === 'jam' && u.side === 0) lines.push(`${this.name(e.unitId)}: ${e.targets.map((t) => this.name(t)).join('・')} を妨害`)

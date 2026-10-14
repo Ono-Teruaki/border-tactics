@@ -1,4 +1,4 @@
-import { expectedDamage, killChance } from './combat.ts'
+import { baseDamage, expectedDamage, hitChance, killChance } from './combat.ts'
 import { attackRange, canSee, canStrike, isMeleeClass, chebyshev, classOf, reachableFor, visionRange } from './game.ts'
 import { dist, key, lineOfSight, samePos, terrain, terrainId } from './grid.ts'
 import type { Rng } from './rng.ts'
@@ -42,6 +42,8 @@ export interface AiParams {
   blob?: number
   /** 倒し切り: この1手で倒し切れる確率 × 相手のコストの重み（既定 0）。味方がすでに狙っている分の期待ダメージを差し引いて見積もる */
   killWeight?: number
+  /** 爆風持ちの敵がいるとき、上下左右に味方がいるマスを避ける強さ（既定 1） */
+  spread?: number
   random?: boolean
 }
 
@@ -153,7 +155,7 @@ function strikeEstimate(ctx: Ctx, u: Unit, pos: Pos, e: Intel, hpLeft: number): 
   if (dist(u.pos, pos) > cls.attackMaxMove) return null
   const ar = attackRange(map, rules, u.cls, pos)
   // 追撃持ちは、敵が多少動いても届く前提で見積もる
-  const reach = cls.pursuit ? dist(pos, e.pos) <= cls.move + 1 : canStrike(map, rules, pos, e.pos, ar, isMeleeClass(rules, u.cls))
+  const reach = cls.pursuit ? dist(pos, e.pos) <= cls.move + 1 : canStrike(map, rules, pos, e.pos, ar, isMeleeClass(rules, u.cls), cls.arc)
   if (!reach) return null
   const ec = classOf(rules, e)
   const from = cls.pursuit ? e.pos : pos
@@ -167,6 +169,20 @@ function aimDamage(ctx: Ctx, u: Unit, pos: Pos, target: string): number {
   const e = ctx.known.find((k) => k.unitId === target && k.age === 0)
   if (!e) return 0
   return strikeEstimate(ctx, u, pos, e, 1)?.exp ?? 0
+}
+
+/** 爆風で巻き込めそうな敵の見込み（HP比） */
+function blastValue(ctx: Ctx, u: Unit, pos: Pos, e: Intel): number {
+  const { map, rules } = ctx.obs
+  const cls = classOf(rules, u)
+  const p = hitChance(map, rules, cls, pos, e.pos).chance / 100
+  let v = 0
+  for (const o of ctx.known) {
+    if (o.age > 0 || o.unitId === e.unitId || Math.abs(o.pos.x - e.pos.x) + Math.abs(o.pos.y - e.pos.y) !== 1) continue
+    const oc = classOf(rules, o)
+    v += Math.min(1, (p * baseDamage(rules, cls.atk, oc.def, cls.pen) * cls.blast) / (o.hp ?? oc.hp)) * 3 * 0.6
+  }
+  return v
 }
 
 /** 移動先 pos からの射撃の見込み（敵がその場に留まると仮定） */
@@ -187,6 +203,8 @@ function fireValue(ctx: Ctx, u: Unit, pos: Pos): { value: number; target?: strin
     // マーク中の敵は次の手も見え続けるので、狙いを継続しやすい
     let v = Math.min(1, exp / hp) * 3 * kill * 0.6 * (e.marked ? 1.15 : 1) * (1 + (ctx.p.focus ?? 0) * (ctx.targets.get(e.unitId) ?? 0))
     if (kw) v += kw * est.kill * ec.cost
+    // 爆風: 狙う敵の上下左右にいる敵も巻き込める
+    if (classOf(rules, u).blast > 0) v += blastValue(ctx, u, pos, e)
     if (v > value) (value = v), (target = e.unitId)
   }
   return { value, target }
@@ -251,6 +269,13 @@ function bestOrder(ctx: Ctx, u: Unit): Order {
 
     // 被弾リスク（遮蔽込み）。防護兵の隣なら軽減
     let threat = threatAt(ctx, cls, u.hp, pos)
+    // 爆風持ちの敵がいれば、上下左右に味方がいるマスは巻き込まれやすい
+    const near4 = [...ctx.planned].filter(([id, ap]) => id !== u.id && Math.abs(ap.x - pos.x) + Math.abs(ap.y - pos.y) === 1).length
+    if (near4) for (const e of known) {
+      const ec = classOf(rules, e)
+      if (!ec.blast || e.age > 2 || dist(pos, e.pos) > ec.move + ec.range + 1) continue
+      threat += near4 * ec.blast * Math.min(1.5, (expectedDamage(map, rules, ec, cls, e.pos, pos) / Math.max(1, u.hp)) * 3) * (p.spread ?? 1)
+    }
     if (!isSupport && ctx.guards.some((g) => chebyshev(g, pos) <= 1 && (!rules.skills.guardSameHeight || terrainId(map, g) === terrainId(map, pos)))) threat *= 0.5
 
     // 索敵：敵の（最終）位置を視界に収める。観測持ちは「見失った敵を見つけ直す」「味方の射程にいる敵をマークする」を重視
