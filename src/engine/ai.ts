@@ -26,6 +26,10 @@ export interface AiParams {
   memory: number
   /** 同点崩し・揺らぎ */
   noise: number
+  /** 衛生兵は戦闘役の移動先が決まってから位置を決める（移動後の味方の隣に入れるように） */
+  healerLast?: boolean
+  /** 衛生兵は撃たずに、いつも支援（回復）の手にする */
+  healerNoFire?: boolean
   random?: boolean
 }
 
@@ -62,10 +66,11 @@ export function decideOrders(obs: Observation, rng: Rng, params: AiParams): Orde
     .map((e) => ({ ...e, age: e.visible ? 0 : obs.turn - e.turn }))
     .filter((e) => e.age <= params.memory || e.turn === 0)
   const isSupport = (u: Unit) => classOf(rules, u).heal > 0 || classOf(rules, u).guardReduce > 0
+  const isLateHealer = (u: Unit) => !!params.healerLast && classOf(rules, u).heal > 0
   const ctx: Ctx = { obs, known, reserved: new Set(), planned: new Map(obs.mine.map((u) => [u.id, u.pos])), guards: [], rng, p: params }
   const orders = new Map<string, Order>()
   // 1) 支援役が先に位置を決める（味方の現在位置を基準）
-  for (const u of obs.mine.filter(isSupport)) {
+  for (const u of obs.mine.filter((x) => isSupport(x) && !isLateHealer(x))) {
     const o = bestOrder(ctx, u)
     ctx.reserved.add(key(o.dest))
     ctx.planned.set(u.id, o.dest)
@@ -79,9 +84,20 @@ export function decideOrders(obs: Observation, rng: Rng, params: AiParams): Orde
     ctx.planned.set(u.id, o.dest)
     orders.set(u.id, o)
   }
+  // 2b) healerLast: 衛生兵は、戦闘役の移動先が決まってから位置を決める
+  for (const u of obs.mine.filter(isLateHealer)) {
+    const o = bestOrder(ctx, u)
+    ctx.reserved.add(key(o.dest))
+    ctx.planned.set(u.id, o.dest)
+    orders.set(u.id, o)
+  }
   // 3) 支援役は、確定した味方の位置で「撃つか支援か」を決め直す
   for (const u of obs.mine.filter(isSupport)) {
     const o = orders.get(u.id)!
+    if (params.healerNoFire && classOf(rules, u).heal > 0) {
+      orders.set(u.id, { ...o, target: undefined })
+      continue
+    }
     const sup = supportValue(ctx, u, o.dest)
     const fire = fireValue(ctx, u, o.dest)
     orders.set(u.id, { ...o, target: sup.value >= fire.value * 1.5 * params.aggression || !fire.target ? undefined : fire.target })
