@@ -148,6 +148,8 @@ export interface RulesConfig {
     jamVision: number
     jamAcc: number
     jamDuration: number
+    /** 妨害された敵は、その間パッシブスキルが使えない（懐の弱さなどの弱点は残る） */
+    jamSilence: boolean
     /** 爆風の形: plus = 上下左右、square = 周囲8マス */
     blastShape: 'plus' | 'square'
   }

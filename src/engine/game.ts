@@ -24,6 +24,16 @@ export function createGame(map: MapDef, rules: RulesConfig, comps: [string[], st
 }
 
 export const classOf = (rules: RulesConfig, u: { cls: string }): UnitClass => rules.classes[u.cls]
+
+/** スキルを無効化されたときに外す項目（弱点や移動制限は残す） */
+const SILENCED: Partial<UnitClass> = { pursuit: false, markOnSight: false, sonar: 0, suppress: false, steadyAim: false, heal: 0, guardReduce: 0, evac: false, stealth: 0, jamOnClimb: false, arc: false, blast: 0 }
+/** 妨害を受けていて、スキルが使えない */
+export const isSilenced = (rules: RulesConfig, u: { jammedUntil: number }, turn: number) => rules.skills.jamSilence && u.jammedUntil >= turn
+/** スキルの無効化を反映したクラス性能 */
+export function skillClass(rules: RulesConfig, u: Unit, turn: number): UnitClass {
+  const c = classOf(rules, u)
+  return isSilenced(rules, u, turn) ? { ...c, ...SILENCED } : c
+}
 /** 周囲8マス判定用の距離 */
 export const chebyshev = (a: Pos, b: Pos) => Math.max(Math.abs(a.x - b.x), Math.abs(a.y - b.y))
 
@@ -47,10 +57,10 @@ export function visionRange(map: MapDef, rules: RulesConfig, cls: string, at: Po
  * - 視界距離・視線（ビル）
  * - 死角: 屋上からでも、ビルの裏側に張り付いた地上のマスは見えない
  */
-export function canSee(map: MapDef, rules: RulesConfig, cls: string, at: Pos, target: Pos, stealth = 0): boolean {
+export function canSee(map: MapDef, rules: RulesConfig, cls: string, at: Pos, target: Pos, stealth = 0, silenced = false): boolean {
   const d = dist(at, target)
   const c = rules.classes[cls]
-  if (c.sonar > 0 && d <= c.sonar) return true
+  if (!silenced && c.sonar > 0 && d <= c.sonar) return true
   if (d > visionRange(map, rules, cls, at) - stealth) return false
   const fromRoof = terrainId(map, at) === 'building'
   if (!lineOfSight(map, rules, at, target, terrain(map, rules, at).seesOverBlockers)) return false
@@ -60,7 +70,7 @@ export function canSee(map: MapDef, rules: RulesConfig, cls: string, at: Pos, ta
 
 /** 隠密中のユニットを見つけられる距離の減り幅 */
 export function stealthOf(rules: RulesConfig, u: Unit, atTurn: number): number {
-  return u.stealthUntil >= atTurn ? rules.classes[u.cls].stealth : 0
+  return u.stealthUntil >= atTurn && !isSilenced(rules, u, atTurn) ? rules.classes[u.cls].stealth : 0
 }
 
 /** 近接クラス（素の射程が1）。隣接した相手への攻撃は、射撃ではなく近接攻撃になる */
@@ -106,7 +116,7 @@ export function visibleEnemyIds(state: GameState, side: Side, atTurn = state.tur
   const out = new Set<string>()
   for (const e of state.units) {
     if (!e.alive || e.side === side) continue
-    if (e.markedUntil >= atTurn || mine.some((m) => canSee(map, rules, m.cls, m.pos, e.pos, stealthOf(rules, e, atTurn) + jamOf(rules, m, atTurn)))) out.add(e.id)
+    if (e.markedUntil >= atTurn || mine.some((m) => canSee(map, rules, m.cls, m.pos, e.pos, stealthOf(rules, e, atTurn) + jamOf(rules, m, atTurn), isSilenced(rules, m, atTurn)))) out.add(e.id)
   }
   return out
 }
@@ -197,7 +207,7 @@ export function resolveTurn(state: GameState, orders: [Order[], Order[]], rng: R
   // --- 追撃: pursuit を持つユニットは、狙った敵の移動先の隣へ（届く範囲で）行き先を変える ---
   const pursued = new Set<string>()
   for (const u of alive) {
-    if (!classOf(rules, u).pursuit) continue
+    if (!skillClass(rules, u, T).pursuit) continue
     const t = alive.find((e) => e.id === orderOf(u)?.target && e.side !== u.side)
     if (!t) continue
     const tp = proposed.get(t.id)!
@@ -247,7 +257,7 @@ export function resolveTurn(state: GameState, orders: [Order[], Order[]], rng: R
 
   // --- 隠密: 条件を満たしたユニットは、この手と次の手、見つかりにくい ---
   for (const u of alive) {
-    const c = classOf(rules, u)
+    const c = skillClass(rules, u, T)
     if (c.stealth <= 0) continue
     const fromRoof = terrainId(map, origin.get(u.id)!) === 'building'
     const onGround = terrainId(map, u.pos) !== 'building'
@@ -256,7 +266,7 @@ export function resolveTurn(state: GameState, orders: [Order[], Order[]], rng: R
 
   // --- 妨害: 地上から屋上へ登ったジャマーが、見えている敵の視界と命中率を下げる ---
   for (const u of alive) {
-    if (!classOf(rules, u).jamOnClimb) continue
+    if (!skillClass(rules, u, T).jamOnClimb) continue
     if (terrainId(map, origin.get(u.id)!) === 'building' || terrainId(map, u.pos) !== 'building') continue
     const seen = alive.filter((e) => e.side !== u.side && canSee(map, rules, u.cls, u.pos, e.pos, stealthOf(rules, e, T)))
     if (!seen.length) continue
@@ -267,7 +277,7 @@ export function resolveTurn(state: GameState, orders: [Order[], Order[]], rng: R
   // --- 観測: スカウトが視界内の敵にマーク（markTrigger = climb なら、地上から屋上へ登った手だけ） ---
   const sk = rules.skills
   for (const u of alive) {
-    const c = classOf(rules, u)
+    const c = skillClass(rules, u, T)
     if (!c.markOnSight || u.markCooldownUntil >= T) continue
     if (sk.markTrigger === 'climb' && (terrainId(map, origin.get(u.id)!) === 'building' || terrainId(map, u.pos) !== 'building')) continue
     const seen = alive
@@ -289,7 +299,7 @@ export function resolveTurn(state: GameState, orders: [Order[], Order[]], rng: R
     .filter((q): q is { u: Unit; targetId: string; init: number } => !!q.targetId)
     .sort((a, b) => b.init - a.init)
   for (const { u, targetId } of queue) {
-    const cls = classOf(rules, u)
+    const cls = skillClass(rules, u, T)
     const t = state.units.find((e) => e.id === targetId && e.side !== u.side)
     let reason: StrikeBlock | null = null
     if (!u.alive) reason = 'down'
@@ -323,7 +333,7 @@ export function resolveTurn(state: GameState, orders: [Order[], Order[]], rng: R
             g.alive &&
             g.side === t.side &&
             g.id !== t.id &&
-            classOf(rules, g).guardReduce > 0 &&
+            skillClass(rules, g, T).guardReduce > 0 &&
             supporting(g) &&
             chebyshev(g.pos, t.pos) <= 1 &&
             (!rules.skills.guardSameHeight || terrainId(map, g.pos) === terrainId(map, t.pos)) &&
@@ -385,7 +395,7 @@ export function resolveTurn(state: GameState, orders: [Order[], Order[]], rng: R
 
   // --- 後送: 衛生兵が、移動前に隣にいた傷ついた味方を自分の隣へ引っ張ってくる ---
   for (const u of alive) {
-    const c = classOf(rules, u)
+    const c = skillClass(rules, u, T)
     if (!u.alive || !c.evac || !supporting(u)) continue
     const ally = alive
       .filter((a) => a.alive && a.side === u.side && a.id !== u.id && a.hp < classOf(rules, a).hp && chebyshev(origin.get(a.id)!, origin.get(u.id)!) <= 1)
@@ -408,7 +418,7 @@ export function resolveTurn(state: GameState, orders: [Order[], Order[]], rng: R
 
   // --- 支援: 衛生兵の回復 ---
   for (const u of alive) {
-    const c = classOf(rules, u)
+    const c = skillClass(rules, u, T)
     if (!u.alive || c.heal <= 0 || !supporting(u)) continue
     const healed: { id: string; amount: number }[] = []
     for (const a of alive) {
