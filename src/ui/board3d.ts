@@ -485,8 +485,9 @@ export class Board3D {
           this.knockback(targetId, from)
         }
         this.popup(to, `-${s.damage}`, '#ff5b47', 850, dx, 1.25)
-        // ヒットストップ：一瞬止めて揺らす
-        await this.shake(shots.length > 1 ? 110 : 170, shots.length > 1 ? 0.05 : 0.09)
+        // 手応え：ダメージが大きいほど強く。連射は1発ごとに軽く
+        const str = Math.min(1.2, 0.3 + s.damage / 16) * (shots.length > 1 ? 0.6 : 1)
+        await this.impact(str, side === 1)
       } else {
         this.popup(to, 'MISS', '#8aa4bf', 700, dx)
         await this.wait(shots.length > 1 ? 90 : 160)
@@ -580,13 +581,66 @@ export class Board3D {
     })
   }
 
-  /** カメラを揺らす（ヒットストップ中） */
-  shake(dur: number, amp: number): Promise<void> {
+  /**
+   * 画面を揺らす。strength は 0〜1.5 くらい（1 = 普通の命中）。
+   * 揺れ幅はカメラまでの距離に比例させるので、引いた画でも寄った画でも同じくらい揺れて見える。
+   * 着弾の瞬間に少し寄る（ズームパンチ）
+   */
+  shake(dur: number, strength: number): Promise<void> {
+    const k = this.reducedMotion ? 0.25 : 1
+    const fov0 = this.camera.fov
+    const seed = Math.random() * 10
     return this.tween(dur, (t) => {
       this.updateCamera()
-      const a = amp * (1 - t)
-      this.camera.position.add(new THREE.Vector3((Math.random() - 0.5) * a, (Math.random() - 0.5) * a, (Math.random() - 0.5) * a))
-    }).then(() => this.updateCamera())
+      const ms = t * dur
+      const decay = (1 - t) ** 2
+      const amp = (this.baseDist / this.zoom) * 0.014 * strength * k * decay
+      const right = new THREE.Vector3().setFromMatrixColumn(this.camera.matrixWorld, 0)
+      const up = new THREE.Vector3().setFromMatrixColumn(this.camera.matrixWorld, 1)
+      this.camera.position.addScaledVector(right, Math.sin(ms * 0.09 + seed) * amp).addScaledVector(up, Math.cos(ms * 0.113 + seed) * amp * 0.8)
+      this.camera.fov = fov0 - 2.2 * strength * k * (1 - t) ** 4
+      this.camera.updateProjectionMatrix()
+    }).then(() => {
+      this.camera.fov = fov0
+      this.camera.updateProjectionMatrix()
+      this.updateCamera()
+    })
+  }
+
+  private reducedMotion = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches
+  private flashEl: HTMLDivElement | null = null
+
+  /** 画面の閃光（味方が撃たれたら赤、敵に当てたら白など） */
+  flashScreen(color: string, opacity: number) {
+    if (!this.flashEl) {
+      const el = document.createElement('div')
+      el.style.cssText = 'position:absolute;inset:0;pointer-events:none;opacity:0;mix-blend-mode:screen;transition:opacity 280ms ease-out'
+      this.container.append(el)
+      this.flashEl = el
+    }
+    const el = this.flashEl
+    el.style.transition = 'none'
+    el.style.background = `radial-gradient(ellipse at center, transparent 35%, ${color} 120%), ${color}`
+    el.style.opacity = String(Math.min(0.6, opacity * (this.reducedMotion ? 0.4 : 1)))
+    requestAnimationFrame(() => {
+      el.style.transition = 'opacity 280ms ease-out'
+      el.style.opacity = '0'
+    })
+  }
+
+  /**
+   * 命中の手応えをまとめて出す: 画面の閃光 → 一瞬止める（ヒットストップ）→ 揺れ。対応端末は振動も。
+   * strength は与えたダメージや撃破かどうかで決める。mine は味方が撃たれたとき（赤く光らせる）
+   */
+  async impact(strength: number, mine: boolean) {
+    this.flashScreen(mine ? '#ff3b30' : '#ffffff', mine ? 0.28 * strength : 0.14 * strength)
+    try {
+      navigator.vibrate?.(Math.round(15 + 35 * strength))
+    } catch {
+      /* 振動できない端末は無視 */
+    }
+    await this.wait(35 + 45 * strength)
+    await this.shake(180 + 160 * strength, strength)
   }
 
   popup(at: Pos, text: string, color: string, dur = 900, dx = 0, scale = 1): Promise<void> {
@@ -626,7 +680,7 @@ export class Board3D {
         g.position.y = start.y + Math.sin(Math.PI * t) * 0.08
         g.setRotationFromAxisAngle(axis, (Math.PI / 2) * (0.92 + Math.sin(Math.PI * t) * -0.06))
       })
-      await this.shake(140, 0.06)
+      await this.shake(220, 0.7)
     }
     const h = 6
     const pillar = new THREE.Mesh(
@@ -677,7 +731,7 @@ export class Board3D {
         this.flash(targetId)
         if (!isKill) this.knockback(targetId, from)
         this.popup(to, `-${s.damage}`, '#ff5b47', 850, 0, isKill ? 1.6 : 1.25)
-        await this.shake(isKill ? 260 : 170, isKill ? 0.12 : 0.09)
+        await this.impact(isKill ? 1.4 : Math.min(1.1, 0.4 + s.damage / 16), side === 1)
       } else {
         this.popup(to, 'MISS', '#8aa4bf', 700)
         await this.wait(160)
@@ -749,7 +803,7 @@ export class Board3D {
     this.burst(to, color, 0.75)
     this.flash(targetId)
     this.popup(to, `-${s.damage}`, '#ff5b47', 1000, 0, 1.7)
-    await this.shake(260, 0.12)
+    await this.impact(1.5, side === 1)
     this.timeScale = 1
     for (const rest of shots.slice(lastHit + 1)) this.popup(to, rest.hit ? `-${rest.damage}` : 'MISS', '#8aa4bf', 600)
     await this.wait(150)

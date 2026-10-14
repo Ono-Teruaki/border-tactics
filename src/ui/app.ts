@@ -539,7 +539,7 @@ class Battle {
       const go = Promise.all(bounces.map((e) => this.board.bouncePiece(e.unitId, tried(e))))
       await this.board.wait(300)
       for (const p of spots.values()) this.board.clash(p)
-      await this.board.shake(160, 0.06)
+      await this.board.shake(240, 0.6)
       await go
       await this.board.wait(250)
     }
