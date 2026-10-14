@@ -29,13 +29,18 @@ function defineMap(id: string, name: string, size: number, buildings: [number, n
  * - 地上の長い直線を切る。スナイパーが地上から撃てるマスは平均で盤面の3割前後まで
  * - 強い屋上（広く撃てる）は中央寄り。自陣のそばの屋上は地上並みに視野を絞る
  */
-function asciiMap(id: string, name: string, rows: string[]): MapDef {
+function asciiMap(id: string, name: string, rows: string[], radars?: [number, number][]): MapDef {
   const size = rows.length
   const tiles = rows.map((r) => r.replace(/\s/g, ''))
   const buildings: [number, number][] = []
   tiles.forEach((r, y) => [...r].forEach((ch, x) => ch === '#' && buildings.push([x, y])))
   const m = defineMap(id, name, size, buildings)
   if (m.tiles.join() !== tiles.join()) throw new Error(`${id}: not point-symmetric`)
+  if (radars) {
+    // 点対称に補完する。どちらの出撃地点からも同じ距離になる
+    m.radars = radars.flatMap(([x, y]) => [{ x, y }, { x: size - 1 - x, y: size - 1 - y }])
+    for (const p of m.radars) if (m.tiles[p.y][p.x] !== '#') throw new Error(`${id}: radar must be on a building ${p.x},${p.y}`)
+  }
   return m
 }
 
@@ -43,7 +48,7 @@ function asciiMap(id: string, name: string, rows: string[]): MapDef {
 export const CURRENT_MAP_IDS = ['block9', 'alley11', 'plaza7']
 
 export const MAPS: MapDef[] = [
-  // 街区: 中央の四つ角のビルが一番強い屋上。自陣そばの屋上は撃てる範囲が狭い
+  // 街区: 中央の四つ角のビルが一番強い屋上。自陣そばの屋上は撃てる範囲が狭い。左上・右下の角にレーダー塔
   asciiMap('block9', '街区 9×9', [
     '. . . # . . . . .',
     '. # . # . # # . .',
@@ -54,7 +59,7 @@ export const MAPS: MapDef[] = [
     '. . . . . . . # .',
     '. . # # . # . # .',
     '. . . . . # . . .',
-  ]),
+  ], [[1, 1]]),
   // 路地: 短い壁で通りを細かく区切る。中央が一番強い屋上で、自陣から5手
   asciiMap('alley11', '路地 11×11', [
     '. . . . # . . . . . .',
@@ -68,7 +73,7 @@ export const MAPS: MapDef[] = [
     '. . . # . . . . . # .',
     '. . . # . . # . # # .',
     '. . . . . . # . . . .',
-  ]),
+  ], [[1, 1]]),
   // 広場: 狭い盤。中央のビルを囲む壁で左右を分ける
   asciiMap('plaza7', '広場 7×7', [
     '. . . . . . .',
@@ -78,7 +83,7 @@ export const MAPS: MapDef[] = [
     '. . # . . . .',
     '. . # . # # .',
     '. . . . . . .',
-  ]),
+  ], [[1, 1]]),
   // ---- 旧マップ（v0.7 まで。比較用） ----
   defineMap('city9', '旧 市街地 9×9', 9, [
     [5, 1],
