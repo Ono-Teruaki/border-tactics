@@ -1,5 +1,5 @@
 import { baseDamage, expectedDamage, hitChance, killChance } from './combat.ts'
-import { attackRange, canSee, canStrike, inBlast, isMeleeClass, chebyshev, classOf, reachableFor, visionRange } from './game.ts'
+import { attackRange, canSee, canStrike, inBlast, isMeleeClass, isSilenced, chebyshev, classOf, reachableFor, visionRange } from './game.ts'
 import { dist, key, lineOfSight, samePos, terrain, terrainId } from './grid.ts'
 import type { Rng } from './rng.ts'
 import type { Intel, Observation, Order, Pos, Unit, UnitClass } from './types.ts'
@@ -227,6 +227,8 @@ function threatAt(ctx: Ctx, cls: UnitClass, hp: number, pos: Pos): number {
 /** 支援（狙いなし）にした場合の価値 */
 function supportValue(ctx: Ctx, u: Unit, pos: Pos): { value: number } {
   const { rules } = ctx.obs
+  // 妨害でスキルを封じられている間は、回復も庇いもできない
+  if (isSilenced(rules, u, ctx.obs.turn)) return { value: 0 }
   const c = classOf(rules, u)
   let value = 0
   for (const a of ctx.obs.mine) {
@@ -327,6 +329,8 @@ function bestOrder(ctx: Ctx, u: Unit): Order {
         if (e.age > 1 || !canSee(map, rules, u.cls, pos, e.pos)) continue
         const ec = classOf(rules, e)
         jam += ec.range > 1 || ec.markOnSight ? 1.2 : 0.5
+        // スキルの無効化: 防護兵・衛生兵など、スキルが要の敵ほど価値が高い
+        if (rules.skills.jamSilence && cls.jamOnClimb) jam += ec.guardReduce > 0 || ec.heal > 0 ? 1 : ec.arc || ec.steadyAim || ec.markOnSight || ec.pursuit ? 0.5 : 0
       }
     }
 

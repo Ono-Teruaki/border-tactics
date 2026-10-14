@@ -21,7 +21,7 @@ function skillText(c: UnitClass): string {
   if (c.suppress) t.push('制圧射撃: 2発以上当てた敵の移動-1・命中-15')
   if (c.steadyAim) t.push('狙撃態勢: 動かなければ命中+15・遮蔽半減')
   if (c.heal) t.push(`応急手当: 狙わない手は周囲8マスの味方を${c.heal}回復`)
-  if (c.jamOnClimb) t.push(`妨害: 地上から屋上に登った手、見えている敵の視界-${rules.skills.jamVision}・命中率-${rules.skills.jamAcc}（次の手まで）`)
+  if (c.jamOnClimb) t.push(`妨害: 地上から屋上に登った手、見えている敵の視界-${rules.skills.jamVision}・命中率-${rules.skills.jamAcc}${rules.skills.jamSilence ? '・スキル無効' : ''}（次の手まで）`)
   if (c.evac) t.push('後送: 狙わない手は、移動前に隣にいた一番傷の深い味方を交戦の後で自分の隣へ連れ戻す')
   if (c.stealth) t.push(`隠密: ${rules.skills.stealthTrigger === 'descend' ? '屋上から降りた手' : '狙わない手'}と次の手は、敵から見つかる距離-${c.stealth}`)
   if (c.arc) t.push('曲射: ビル越しに撃て、遮蔽を無視する（味方が見ている敵なら狙える）')
@@ -603,7 +603,7 @@ class Battle {
       } else if (e.type === 'jam') {
         const shown = e.targets.filter((t) => isMine(t) || disp.get(t))
         if (isMine(e.unitId) || shown.length) {
-          this.caption(`${this.name(e.unitId)} 妨害：${e.targets.map((t) => this.name(t)).join('・')} の視界と命中率が下がる`)
+          this.caption(`${this.name(e.unitId)} 妨害：${e.targets.map((t) => this.name(t)).join('・')} の視界と命中率が下がる${rules.skills.jamSilence ? '。スキルも使えない' : ''}`)
           for (const t of shown) this.board.popup(disp.get(t)?.pos ?? unitOf(t).pos, '妨害', '#c58cff', 900)
           await this.board.wait(500)
         }

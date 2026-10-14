@@ -242,6 +242,18 @@ const tests: Record<string, () => void> = {
     assert.equal(unit(g, '1-2').hp, 22)
     assert.deepEqual(a.splash?.map((x) => x.id), ['1-1'])
   },
+  'ジャマーが登って妨害した敵は、その手からスキルが使えない（防護兵が庇えない）'() {
+    const m = mapOf(['.#.....', '.......', '.......'], [{ x: 0, y: 0 }, { x: 2, y: 1 }], [{ x: 4, y: 0 }, { x: 4, y: 1 }])
+    const play = (silence: boolean) => {
+      const g = createGame(m, mergeRules(rules2, { skills: { jamSilence: silence } }), [['jammer', 'gunner'], ['guardian', 'scout']])
+      const ev = resolveTurn(g, [[mv('0-0', 1, 0), mv('0-1', 2, 1, '1-1')], stay(g, 1)], createRng(1))
+      assert.ok(ev.some((e) => e.type === 'jam'))
+      const a = ev.find((e) => e.type === 'attack' && e.unitId === '0-1')
+      return a && a.type === 'attack' ? a.shots.filter((x) => x.guardedBy).length : -1
+    }
+    assert.ok(play(false) > 0)
+    assert.equal(play(true), 0)
+  },
   '張り付きの制限は射撃だけ。近接クラスは屋上から真下の敵を攻撃できる'() {
     const m = mapOf(['.#.....', '.......'], [{ x: 1, y: 0 }], [{ x: 2, y: 0 }])
     const g = createGame(m, rules1, [['attacker'], ['gunner']])
