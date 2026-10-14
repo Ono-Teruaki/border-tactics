@@ -20,7 +20,7 @@ type Variant = RulesOverride & { maps?: string[]; ai?: Record<string, Partial<Ai
 /** 調整する重みと、その範囲 */
 const KNOBS: { key: keyof AiParams; label: string; lo: number; hi: number; def: number }[] = [
   { key: 'aggression', label: '攻める', lo: 0.2, hi: 3, def: 1 },
-  { key: 'caution', label: '慎重さ', lo: 0, hi: 3, def: 1 },
+  { key: 'caution', label: '慎重さ', lo: 0, hi: 5, def: 1 },
   { key: 'scouting', label: '索敵', lo: 0, hi: 2, def: 0.6 },
   { key: 'roofPref', label: '屋上', lo: 0, hi: 2, def: 0.6 },
   { key: 'rush', label: '射手への詰め寄り', lo: 0, hi: 2, def: 0 },
