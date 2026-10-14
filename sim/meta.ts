@@ -1,5 +1,6 @@
 // 編成メタの網羅シミュレーション（全編成 × 全編成 × マップ、先後入れ替え）
-//   node sim/meta.ts [--variant sim/variants/x.json] [--maps block9,alley11] [--out name]
+//   node sim/meta.ts [--variant sim/variants/x.json] [--maps block9,alley11] [--reps 2] [--unique] [--out name]
+//   --unique: 同じクラスを入れない編成だけ（6クラスから4つ = 15編成）
 import { readFileSync, mkdirSync, writeFileSync } from 'node:fs'
 import { basename } from 'node:path'
 import { availableParallelism } from 'node:os'
@@ -22,9 +23,9 @@ function setup(variant: Variant) {
 type Cell = [number, number, number, number]
 
 if (!isMainThread) {
-  const { variant, mapIds, rows, seed, reps } = workerData as { variant: Variant; mapIds: string[]; rows: number[]; seed: number; reps: number }
+  const { variant, mapIds, rows, seed, reps, unique } = workerData as { variant: Variant; mapIds: string[]; rows: number[]; seed: number; reps: number; unique: boolean }
   const rules = setup(variant)
-  const comps = allComps(Object.keys(rules.classes), rules.teamSize)
+  const comps = allComps(Object.keys(rules.classes), rules.teamSize).filter((c) => !unique || new Set(c).size === c.length)
   const out: Record<number, Cell[]> = {}
   for (const i of rows) {
     out[i] = comps.map(() => [0, 0, 0, 0] as Cell)
@@ -52,10 +53,11 @@ if (!isMainThread) {
   const variant: Variant = variantPath ? JSON.parse(readFileSync(variantPath, 'utf8')) : {}
   const mapIds = (arg('maps') ?? variant.maps?.join(',') ?? CURRENT_MAP_IDS.join(',')).split(',')
   const reps = Number(arg('reps', '2'))
-  const name = arg('out', `meta-${variantPath ? basename(variantPath, '.json') : 'default'}`)!
+  const unique = args.includes('--unique')
+  const name = arg('out', `meta-${variantPath ? basename(variantPath, '.json') : 'default'}${unique ? '-unique' : ''}`)!
   const rules: RulesConfig = setup(variant)
   const classIds = Object.keys(rules.classes)
-  const comps = allComps(classIds, rules.teamSize)
+  const comps = allComps(classIds, rules.teamSize).filter((c) => !unique || new Set(c).size === c.length)
   const n = comps.length
   const t0 = Date.now()
 
@@ -66,7 +68,7 @@ if (!isMainThread) {
     Array.from({ length: threads }, (_, w) => {
       const rows = Array.from({ length: n }, (_, i) => i).filter((i) => i % threads === w)
       return new Promise<void>((resolve, reject) => {
-        const worker = new Worker(new URL(import.meta.url), { workerData: { variant, mapIds, rows, seed: 7, reps } })
+        const worker = new Worker(new URL(import.meta.url), { workerData: { variant, mapIds, rows, seed: 7, reps, unique } })
         worker.on('message', (m) => {
           if (m.progress) {
             doneRows++
@@ -193,7 +195,20 @@ if (!isMainThread) {
   writeFileSync(`sim/results/${name}.md`, md.join('\n') + '\n')
   writeFileSync(
     `sim/results/${name}.json`,
-    JSON.stringify({ variant, mapIds, legal: rankLegal.map((r) => ({ comp: L(r.i), score: score(r.c), w: r.c[0], d: r.c[1], l: r.c[2] })) }, null, 2),
+    JSON.stringify(
+      {
+        variant,
+        mapIds,
+        reps,
+        legal: rankLegal.map((r) => ({ comp: L(r.i), score: score(r.c), w: r.c[0], d: r.c[1], l: r.c[2] })),
+        // 編成どうしの相性表（編成が少ないときだけ）。matrix[a][b] = a が b と戦ったときの a の勝ち点率
+        ...(legalPool.length <= 40
+          ? { matrix: Object.fromEntries(rankLegal.map((r) => [L(r.i), Object.fromEntries(rankLegal.filter((q) => q.i !== r.i).map((q) => [L(q.i), score(vs(r.i, q.i))]))])) }
+          : {}),
+      },
+      null,
+      2,
+    ),
   )
   console.log(md.join('\n'))
   console.log(`\n→ sim/results/${name}.md`)
