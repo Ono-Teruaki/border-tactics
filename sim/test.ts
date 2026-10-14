@@ -1,6 +1,6 @@
 // ルール仕様テスト: node sim/test.ts
 import assert from 'node:assert/strict'
-import { chebyshev, createGame, gameResult, moveOf, observe, resolveTurn, visibleEnemyIds } from '../src/engine/game.ts'
+import { chebyshev, createGame, strikeCheck, gameResult, moveOf, observe, resolveTurn, visibleEnemyIds } from '../src/engine/game.ts'
 import { DEFAULT_RULES, mergeRules } from '../src/engine/rules.ts'
 import { createRng, seedStreams } from '../src/engine/rng.ts'
 import { replayRecord, type GameRecord } from '../src/engine/record.ts'
@@ -199,6 +199,14 @@ const tests: Record<string, () => void> = {
     const g3 = createGame(m, mergeRules(rules1, { cover: { wallHug: false } }), [['gunner'], ['attacker']])
     resolveTurn(g3, [stay(g3, 0, '1-0'), stay(g3, 1)], createRng(1))
     assert.equal(unit(g3, '1-0').hp, 16)
+  },
+  '屋上から撃てないのは自分のビルの真下だけ。他のビルに張り付いた敵は遮蔽つきで撃てる'() {
+    // (0,0) の屋上から、(3,2) のビルに張り付いた (4,2) の敵を撃つ。射線はビルの角をかすめるだけ
+    const m = mapOf(['#.....', '......', '...#..'], [{ x: 0, y: 0 }], [{ x: 4, y: 2 }])
+    assert.equal(strikeCheck(m, DEFAULT_RULES, { x: 0, y: 0 }, { x: 4, y: 2 }, 8), null)
+    assert.equal(coverFrom(m, { x: 0, y: 0 }, { x: 4, y: 2 }), 'half')
+    // 自分のビルの真下は撃てない
+    assert.equal(strikeCheck(m, DEFAULT_RULES, { x: 0, y: 0 }, { x: 1, y: 0 }, 8), 'cover')
   },
   '張り付きの制限は射撃だけ。近接クラスは屋上から真下の敵を攻撃できる'() {
     const m = mapOf(['.#.....', '.......'], [{ x: 1, y: 0 }], [{ x: 2, y: 0 }])
