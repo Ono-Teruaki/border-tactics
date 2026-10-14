@@ -48,11 +48,29 @@ export function lineOfSight(map: MapDef, rules: RulesConfig, a: Pos, b: Pos, see
   return true
 }
 
-/** 地形コストのみを考慮した到達可能マス（ユニットは無視） */
-export function reachable(map: MapDef, rules: RulesConfig, from: Pos, move: number): Map<string, { pos: Pos; cost: number }> {
+const reachCache = new WeakMap<MapDef, WeakMap<RulesConfig, Map<string, ReadonlyMap<string, { pos: Pos; cost: number }>>>>()
+
+/**
+ * 地形コストのみを考慮した到達可能マス（ユニットは無視）。
+ * 同じマップ・ルール・出発点・移動力なら結果は同じなのでキャッシュする（返す Map と中身は書き換えないこと）
+ */
+export function reachable(map: MapDef, rules: RulesConfig, from: Pos, move: number): ReadonlyMap<string, { pos: Pos; cost: number }> {
+  let byRules = reachCache.get(map)
+  if (!byRules) reachCache.set(map, (byRules = new WeakMap()))
+  let cache = byRules.get(rules)
+  if (!cache) byRules.set(rules, (cache = new Map()))
+  const ck = `${from.x},${from.y},${move}`
+  const hit = cache.get(ck)
+  if (hit) return hit
+  const result = computeReachable(map, rules, from, move)
+  cache.set(ck, result)
+  return result
+}
+
+function computeReachable(map: MapDef, rules: RulesConfig, from: Pos, move: number): Map<string, { pos: Pos; cost: number }> {
   const best = new Map<string, { pos: Pos; cost: number }>()
-  best.set(key(from), { pos: from, cost: 0 })
-  const queue: { pos: Pos; cost: number }[] = [{ pos: from, cost: 0 }]
+  best.set(key(from), { pos: { ...from }, cost: 0 })
+  const queue: { pos: Pos; cost: number }[] = [{ pos: { ...from }, cost: 0 }]
   while (queue.length) {
     queue.sort((p, q) => p.cost - q.cost)
     const cur = queue.shift()!
