@@ -881,41 +881,52 @@ function holo2() {
     scene.add(top)
   }
 
-  // 札：クラスの字＋HPバー
-  const tag = (p: Piece) =>
-    canvas(256, 96, (g) => {
+  // 駒：①ホロの「六角の台座＋光る字」を基本に、字を陣営色の丸に乗せて読みやすくする
+  const token = (p: Piece, ghost = false) =>
+    canvas(160, 160, (g) => {
       const col = hex(p.side === 0 ? ME : EN)
-      g.fillStyle = 'rgba(8,18,32,0.88)'
       g.beginPath()
-      g.roundRect(4, 16, 248, 64, 32)
-      g.fill()
-      g.strokeStyle = col
-      g.lineWidth = 4
-      g.stroke()
-      g.fillStyle = col
-      g.beginPath()
-      g.arc(48, 48, 26, 0, Math.PI * 2)
-      g.fill()
-      g.fillStyle = '#ffffff'
-      g.font = '900 34px system-ui'
+      g.arc(80, 80, 64, 0, Math.PI * 2)
+      if (ghost) {
+        g.setLineDash([12, 9])
+        g.strokeStyle = col
+        g.lineWidth = 7
+        g.stroke()
+      } else {
+        g.fillStyle = col
+        g.fill()
+        g.strokeStyle = 'rgba(255,255,255,0.9)'
+        g.lineWidth = 6
+        g.stroke()
+      }
+      g.fillStyle = ghost ? col : '#ffffff'
+      g.font = '900 78px "Hiragino Sans", system-ui'
       g.textAlign = 'center'
       g.textBaseline = 'middle'
-      g.fillText(kanji(p.cls), 48, 50)
+      g.fillText(kanji(p.cls), 80, 86)
+    })
+  const hpBar = (p: Piece) =>
+    canvas(200, 48, (g) => {
+      const col = hex(p.side === 0 ? ME : EN)
       const max = DEFAULT_RULES.classes[p.cls].hp
+      g.fillStyle = 'rgba(8,18,32,0.85)'
+      g.beginPath()
+      g.roundRect(2, 6, 196, 36, 18)
+      g.fill()
       g.fillStyle = 'rgba(255,255,255,0.15)'
       g.beginPath()
-      g.roundRect(86, 38, 112, 20, 10)
+      g.roundRect(12, 16, 120, 16, 8)
       g.fill()
       g.fillStyle = p.hp / max > 0.5 ? col : '#ffc247'
       g.beginPath()
-      g.roundRect(86, 38, Math.max(20, (112 * p.hp) / max), 20, 10)
+      g.roundRect(12, 16, Math.max(16, (120 * p.hp) / max), 16, 8)
       g.fill()
       g.fillStyle = '#e8f6ff'
-      g.font = '800 28px system-ui'
-      g.fillText(String(p.hp), 226, 50)
+      g.font = '800 26px system-ui'
+      g.textAlign = 'center'
+      g.textBaseline = 'middle'
+      g.fillText(String(p.hp), 166, 25)
     })
-
-  // 駒：陣営色の立体の人形。足元に光の輪と光だまり
   const glowTex = canvas(128, 128, (g) => {
     const gr = g.createRadialGradient(64, 64, 4, 64, 64, 64)
     gr.addColorStop(0, 'rgba(255,255,255,0.9)')
@@ -925,65 +936,37 @@ function holo2() {
   })
   for (const p of pieces) {
     const col = p.side === 0 ? ME : EN
-    const dark = p.side === 0 ? 0x1b5f8f : 0x8f2b22
+    const base = world(p.pos)
     const g = new THREE.Group()
-    g.position.copy(world(p.pos))
+    g.position.copy(base)
+    const rimGeo = new THREE.EdgesGeometry(new THREE.CylinderGeometry(0.38, 0.38, 0.001, 6))
     if (p.ghost) {
-      // 見失った敵：ワイヤーのホログラム
-      const wire = new THREE.MeshBasicMaterial({ color: col, wireframe: true, transparent: true, opacity: 0.45 })
-      const body = new THREE.Mesh(new THREE.CapsuleGeometry(0.12, 0.22, 4, 8), wire)
-      body.position.y = 0.3
-      const head = new THREE.Mesh(new THREE.SphereGeometry(0.1, 8, 6), wire)
-      head.position.y = 0.55
-      const ring = new THREE.Mesh(new THREE.RingGeometry(0.3, 0.34, 32), new THREE.MeshBasicMaterial({ color: col, transparent: true, opacity: 0.6, side: THREE.DoubleSide }))
-      ring.rotation.x = -Math.PI / 2
-      ring.position.y = 0.01
-      g.add(body, head, ring)
+      // 見失った敵：点線の字＋輪郭だけの台座
+      const rimLine = new THREE.LineSegments(rimGeo, new THREE.LineBasicMaterial({ color: col, transparent: true, opacity: 0.6 }))
+      rimLine.position.y = 0.02
+      g.add(rimLine)
       scene.add(g)
-      sprite(label(`? ${p.ghost}手前`, { font: '800 40px system-ui', fill: hex(col), bg: 'rgba(8,18,32,0.85)', w: 260 }), 0.7, 0.26, world(p.pos, 0.95))
+      sprite(token(p, true), 0.42, 0.42, world(p.pos, 0.45), 0.8)
+      sprite(label(`? ${p.ghost}手前`, { font: '800 40px system-ui', fill: hex(col), bg: 'rgba(8,18,32,0.85)', w: 260 }), 0.6, 0.22, world(p.pos, 0.8))
       continue
     }
-    const plastic = (c: number, emissive = 0x000000) => new THREE.MeshStandardMaterial({ color: c, roughness: 0.35, metalness: 0.05, emissive, emissiveIntensity: 0.12 })
-    const pool = new THREE.Mesh(new THREE.PlaneGeometry(1.1, 1.1), new THREE.MeshBasicMaterial({ map: glowTex, color: col, transparent: true, opacity: 0.22, depthWrite: false, blending: THREE.AdditiveBlending }))
+    const pool = new THREE.Mesh(new THREE.PlaneGeometry(1.1, 1.1), new THREE.MeshBasicMaterial({ map: glowTex, color: col, transparent: true, opacity: 0.25, depthWrite: false, blending: THREE.AdditiveBlending }))
     pool.rotation.x = -Math.PI / 2
     pool.position.y = 0.006
-    const ring = new THREE.Mesh(new THREE.TorusGeometry(0.3, 0.025, 8, 40), new THREE.MeshBasicMaterial({ color: col }))
-    ring.rotation.x = Math.PI / 2
-    ring.position.y = 0.05
-    const base = new THREE.Mesh(new THREE.CylinderGeometry(0.28, 0.3, 0.06, 32), plastic(0xe9f3fa))
-    base.position.y = 0.03
-    const body = new THREE.Mesh(new THREE.CapsuleGeometry(0.12, 0.22, 6, 16), plastic(col, col))
-    body.position.y = 0.3
-    const head = new THREE.Mesh(new THREE.SphereGeometry(0.1, 20, 14), plastic(0xf1d7bd))
-    head.position.y = 0.55
-    const helmet = new THREE.Mesh(new THREE.SphereGeometry(0.11, 20, 10, 0, Math.PI * 2, 0, Math.PI / 2), plastic(dark))
-    helmet.position.y = 0.57
-    g.add(pool, ring, base, body, head, helmet)
-    if (p.cls === 'sniper') {
-      const gun = new THREE.Mesh(new THREE.CylinderGeometry(0.015, 0.015, 0.55), plastic(0x24303d))
-      gun.rotation.z = Math.PI / 2.6
-      gun.position.set(0.1, 0.42, 0.08)
-      g.add(gun)
-    } else if (p.cls === 'gunner') {
-      const gun = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.08, 0.32), plastic(0x24303d))
-      gun.position.set(0.12, 0.33, 0.1)
-      g.add(gun)
-    } else if (p.cls === 'attacker') {
-      const blade = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.42, 0.06), plastic(0xdbe7f0, 0x99ddff))
-      blade.position.set(0.17, 0.42, 0)
-      blade.rotation.z = -0.3
-      g.add(blade)
-    } else if (p.cls === 'scout') {
-      const ant = new THREE.Mesh(new THREE.CylinderGeometry(0.008, 0.008, 0.35), plastic(0x24303d))
-      ant.position.set(-0.1, 0.6, -0.05)
-      const tip = new THREE.Mesh(new THREE.SphereGeometry(0.025, 8, 6), new THREE.MeshBasicMaterial({ color: col }))
-      tip.position.set(-0.1, 0.78, -0.05)
-      g.add(ant, tip)
-    }
-    g.traverse((o) => (o.castShadow = o !== pool))
-    g.rotation.y = p.side === 0 ? -Math.PI * 0.75 : Math.PI * 0.25
+    const plate = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.36, 0.39, 0.1, 6),
+      new THREE.MeshStandardMaterial({ color: col, roughness: 0.35, metalness: 0.1, emissive: col, emissiveIntensity: 0.25 }),
+    )
+    plate.position.y = 0.05
+    plate.castShadow = true
+    const rimLine = new THREE.LineSegments(rimGeo, new THREE.LineBasicMaterial({ color: 0xffffff }))
+    rimLine.position.y = 0.101
+    const beam = new THREE.Mesh(new THREE.CylinderGeometry(0.015, 0.015, 0.3, 6), new THREE.MeshBasicMaterial({ color: col }))
+    beam.position.y = 0.25
+    g.add(pool, plate, rimLine, beam)
     scene.add(g)
-    sprite(tag(p), 0.84, 0.32, world(p.pos, 1.0))
+    sprite(token(p), 0.42, 0.42, world(p.pos, 0.55))
+    sprite(hpBar(p), 0.5, 0.12, world(p.pos, 0.86))
   }
 
   // 射線：光の筋＋照準＋命中率
