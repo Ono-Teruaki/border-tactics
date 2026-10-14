@@ -113,6 +113,7 @@
 - `npm run sim [-- --games N --quick --variant sim/variants/x.json]`: CPU vs ランダム、陣地バイアス、クリア可能性、編成の相性
 - `npm run meta [-- --variant sim/variants/x.json --reps 2]`: 全126編成の総当たり（今のマップ3枚、94,500戦。3スレッドで約3分）
 - `node sim/replay.ts record.json`: 棋譜を再生する
+- `node sim/contrib.ts [--opp 24]`: 支援役の貢献の分析。4体目の入れ替え比較、HP換算の貢献度の内訳（与ダメ・索敵・マーク上乗せ・回復・守ったHP）、スキルだけを止めた比較（約80秒）
 - `node sim/sightlines.ts [--cls sniper] [--map city9]`: マップの射線分析。各屋上・地上から撃てるマス／見えるマスの数と、自陣から何手で着くか
 - variant には、ルールの差分（`rules.ts` と同じ形）と、任意で `maps`・`ai`（CPUのパラメータ）を書ける
 - 結果は `sim/results/<名前>.md` と `.json` に出る
