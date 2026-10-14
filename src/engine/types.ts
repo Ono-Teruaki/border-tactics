@@ -80,6 +80,8 @@ export interface RulesConfig {
   combat: {
     /** ダメージの乱数幅（±割合） */
     variance: number
+    /** ダメージ全体の倍率（打たれ強さの調整用） */
+    damageScale: number
     /** 遮蔽による命中率低下（%） */
     coverHalf: number
     coverLight: number

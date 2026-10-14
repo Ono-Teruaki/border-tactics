@@ -1,5 +1,5 @@
 // 衛生兵の位置取りの分析。回復が少ないのは CPU の動かし方のせいか、ルールのせいかを切り分ける
-//   node sim/medic.ts [--opp 24] [--out medic]
+//   node sim/medic.ts [--opp 24] [--variant sim/variants/x.json] [--out medic]
 //
 // 衛生兵が生きている手を1つずつ、次のどれに当たるかで分類する（上から順に判定）
 // - 撃破された: その手の交戦で衛生兵が撃破され、回復まで行けなかった
@@ -10,21 +10,23 @@
 //   （うち「味方が動いて離れた」: 衛生兵は味方の移動前の位置の隣に行っていた）
 // - 届かない: どこへ動いてもけがをした味方の隣に入れなかった
 // あわせて「最善の位置なら回復できた量」（移動後の味方の位置が分かっている前提の上限）と、実際の回復量を比べる
-import { writeFileSync, mkdirSync } from 'node:fs'
+import { readFileSync, writeFileSync, mkdirSync } from 'node:fs'
+import { basename } from 'node:path'
 import { AI_PRESETS, decideOrders, type AiParams } from '../src/engine/ai.ts'
 import { chebyshev, createGame, gameResult, observe, reachableFor, resolveTurn } from '../src/engine/game.ts'
 import { key } from '../src/engine/grid.ts'
 import { CURRENT_MAP_IDS, getMap } from '../src/engine/maps.ts'
 import { createRng } from '../src/engine/rng.ts'
-import { DEFAULT_RULES } from '../src/engine/rules.ts'
+import { DEFAULT_RULES, mergeRules } from '../src/engine/rules.ts'
 import type { MapDef, Pos, Side, Unit } from '../src/engine/types.ts'
 import { allComps } from './lib.ts'
 
 const args = process.argv.slice(2)
 const arg = (n: string, d: string) => (args.includes(`--${n}`) ? args[args.indexOf(`--${n}`) + 1] : d)
 const OPP = Number(arg('opp', '24'))
-const OUT = arg('out', 'medic')
-const rules = DEFAULT_RULES
+const VARIANT = arg('variant', '')
+const OUT = arg('out', VARIANT ? `medic-${basename(VARIANT, '.json')}` : 'medic')
+const rules = VARIANT ? mergeRules(DEFAULT_RULES, JSON.parse(readFileSync(VARIANT, 'utf8'))) : DEFAULT_RULES
 const classIds = Object.keys(rules.classes)
 const legal = allComps(classIds, rules.teamSize).filter((c) => classIds.every((k) => c.filter((x) => x === k).length <= rules.skills.maxPerClass))
 const withMedic = legal.map((c, i) => ({ c, i })).filter(({ c }) => c.includes('medic'))

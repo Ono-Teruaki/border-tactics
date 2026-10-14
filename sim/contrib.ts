@@ -1,10 +1,11 @@
 // 支援役の貢献の分析。勝ち点率だけでは見えない「交戦への寄与」を測る
-//   node sim/contrib.ts [--opp 24] [--out contrib]
+//   node sim/contrib.ts [--opp 24] [--variant sim/variants/x.json] [--out contrib]
 //
 // A. 4体目の入れ替え: 同じ3体に、4体目として何を足すと一番勝てるか（meta-default.json の勝ち点率から）
 // B. 貢献度の内訳: 試合中の行動を「HP換算」で集計する（与ダメージ・索敵で撃たせたダメージ・マークの上乗せ・回復・肩代わりで守ったHP）
 // C. スキルを止めた比較: 同じ編成・同じ相手・同じ乱数で、支援役のスキルだけを止めて、交戦の結果がどれだけ変わるか
-import { readFileSync, writeFileSync, mkdirSync } from 'node:fs'
+import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs'
+import { basename } from 'node:path'
 import { AI_PRESETS, decideOrders } from '../src/engine/ai.ts'
 import { baseDamage } from '../src/engine/combat.ts'
 import { canSee, createGame, gameResult, observe, resolveTurn } from '../src/engine/game.ts'
@@ -17,8 +18,10 @@ import { allComps } from './lib.ts'
 const args = process.argv.slice(2)
 const arg = (n: string, d: string) => (args.includes(`--${n}`) ? args[args.indexOf(`--${n}`) + 1] : d)
 const OPP = Number(arg('opp', '24'))
-const OUT = arg('out', 'contrib')
-const rules = DEFAULT_RULES
+const VARIANT = arg('variant', '')
+const OUT = arg('out', VARIANT ? `contrib-${basename(VARIANT, '.json')}` : 'contrib')
+const rules = VARIANT ? mergeRules(DEFAULT_RULES, JSON.parse(readFileSync(VARIANT, 'utf8'))) : DEFAULT_RULES
+const META = VARIANT ? `sim/results/meta-${basename(VARIANT, '.json')}.json` : 'sim/results/meta-default.json'
 const classIds = Object.keys(rules.classes)
 const comps = allComps(classIds, rules.teamSize).filter((c) => classIds.every((k) => c.filter((x) => x === k).length <= rules.skills.maxPerClass))
 const maps = CURRENT_MAP_IDS.map(getMap)
@@ -32,11 +35,12 @@ const out = (s = '') => (md.push(s), console.log(s))
 out('# 支援役の貢献')
 out()
 out('## A. 4体目の入れ替え（同じ3体に何を足すと勝てるか）')
-out('上限ルール内の全編成の勝ち点率（`meta-default.json`）から、3体が同じで4体目だけ違う編成を比べる。')
+out(`上限ルール内の全編成の勝ち点率（\`${META}\`）から、3体が同じで4体目だけ違う編成を比べる。`)
 out('「平均差」は、その3体に足せる全クラスの平均と比べて何ポイント上か。「1位の回数」は、その3体に足すクラスの中で一番勝てた回数。')
 out()
-{
-  const meta = JSON.parse(readFileSync('sim/results/meta-default.json', 'utf8')) as { legal: { comp: string; score: number }[] }
+if (!existsSync(META)) out(`（${META} がないので省略。先に npm run meta -- --variant ... を回す）`)
+else {
+  const meta = JSON.parse(readFileSync(META, 'utf8')) as { legal: { comp: string; score: number }[] }
   const score = new Map(meta.legal.map((r) => [r.comp, r.score]))
   const shorts = classIds.map((c) => rules.classes[c].short)
   const sortLabel = (s: string) => [...s].sort((a, b) => shorts.indexOf(a) - shorts.indexOf(b)).join('')
@@ -121,7 +125,7 @@ function play(map: MapDef, r: RulesConfig, cs: [string[], string[]], seed: numbe
         hp.set(victim, hp.get(victim)! - d)
         per.get(victim)!.taken += d
         eff += d
-        if (s.guardedBy) per.get(s.guardedBy)!.guarded += Math.max(1, baseDamage(sc.atk, r.classes[target.cls].def)) - d
+        if (s.guardedBy) per.get(s.guardedBy)!.guarded += Math.max(1, baseDamage(sc.atk, r.classes[target.cls].def, r.combat.damageScale)) - d
       }
       per.get(e.unitId)!.dealt += eff
       sideDealt[shooter.side] += eff
