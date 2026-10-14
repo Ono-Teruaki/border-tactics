@@ -1,0 +1,21 @@
+{
+  "ai": {
+    "cpu": {
+      "aggression": 0.914,
+      "caution": 3.331,
+      "scouting": 0.06,
+      "roofPref": 0.563,
+      "rush": 0.594,
+      "evade": 0.306,
+      "fireWeight": 1.5,
+      "cohesion": 0.483,
+      "focus": 0.238,
+      "jam": 1.083
+    }
+  },
+  "classes": {
+    "guardian": {
+      "atk": 12
+    }
+  }
+}
