@@ -1,4 +1,4 @@
-import { expectedDamage } from './combat.ts'
+import { expectedDamage, killChance } from './combat.ts'
 import { attackRange, canSee, canStrike, isMeleeClass, chebyshev, classOf, reachableFor, visionRange } from './game.ts'
 import { dist, key, lineOfSight, samePos, terrain, terrainId } from './grid.ts'
 import type { Rng } from './rng.ts'
@@ -40,6 +40,8 @@ export interface AiParams {
   jam?: number
   /** 団塊: 全員が味方の隣にいたがる強さ（既定 0。支援役の cohesion とは別に、戦闘役にもかかる） */
   blob?: number
+  /** 倒し切り: この1手で倒し切れる確率 × 相手のコストの重み（既定 0）。味方がすでに狙っている分の期待ダメージを差し引いて見積もる */
+  killWeight?: number
   random?: boolean
 }
 
@@ -77,9 +79,14 @@ export function decideOrders(obs: Observation, rng: Rng, params: AiParams): Orde
     .filter((e) => e.age <= params.memory || e.turn === 0)
   const isSupport = (u: Unit) => classOf(rules, u).heal > 0 || classOf(rules, u).guardReduce > 0
   const isLateHealer = (u: Unit) => !!params.healerLast && classOf(rules, u).heal > 0
-  const ctx: Ctx = { obs, known, reserved: new Set(), planned: new Map(obs.mine.map((u) => [u.id, u.pos])), guards: [], targets: new Map(), rng, p: params }
+  const ctx: Ctx = { obs, known, reserved: new Set(), planned: new Map(obs.mine.map((u) => [u.id, u.pos])), guards: [], targets: new Map(), dmg: new Map(), rng, p: params }
   const fw = params.fireWeight ?? 1.5
-  const aim = (o: Order) => o.target && ctx.targets.set(o.target, (ctx.targets.get(o.target) ?? 0) + 1)
+  const aim = (o: Order, sign = 1) => {
+    if (!o.target) return
+    ctx.targets.set(o.target, (ctx.targets.get(o.target) ?? 0) + sign)
+    const u = obs.mine.find((x) => x.id === o.unitId)!
+    ctx.dmg.set(o.target, (ctx.dmg.get(o.target) ?? 0) + sign * aimDamage(ctx, u, o.dest, o.target))
+  }
   const orders = new Map<string, Order>()
   // 1) 支援役が先に位置を決める（味方の現在位置を基準）
   for (const u of obs.mine.filter((x) => isSupport(x) && !isLateHealer(x))) {
@@ -109,13 +116,16 @@ export function decideOrders(obs: Observation, rng: Rng, params: AiParams): Orde
   // 3) 支援役は、確定した味方の位置で「撃つか支援か」を決め直す
   for (const u of obs.mine.filter(isSupport)) {
     const o = orders.get(u.id)!
+    aim(o, -1)
     if (params.healerNoFire && classOf(rules, u).heal > 0) {
       orders.set(u.id, { ...o, target: undefined })
       continue
     }
     const sup = supportValue(ctx, u, o.dest)
     const fire = fireValue(ctx, u, o.dest)
-    orders.set(u.id, { ...o, target: sup.value >= fire.value * fw * params.aggression || !fire.target ? undefined : fire.target })
+    const next = { ...o, target: sup.value >= fire.value * fw * params.aggression || !fire.target ? undefined : fire.target }
+    orders.set(u.id, next)
+    aim(next)
   }
   return obs.mine.map((u) => orders.get(u.id)!)
 }
@@ -130,31 +140,53 @@ interface Ctx {
   guards: Pos[]
   /** 決定済みの味方の狙い（敵ID → 狙っている数） */
   targets: Map<string, number>
+  /** 決定済みの味方の狙いの期待ダメージ（敵ID → 合計） */
+  dmg: Map<string, number>
   rng: Rng
   p: AiParams
 }
 
-/** 移動先 pos からの射撃の見込み（敵がその場に留まると仮定） */
-function fireValue(ctx: Ctx, u: Unit, pos: Pos): { value: number; target?: string } {
+/** 移動先 pos から敵 e を撃ったときの見積もり（期待ダメージと倒し切れる確率） */
+function strikeEstimate(ctx: Ctx, u: Unit, pos: Pos, e: Intel, hpLeft: number): { exp: number; kill: number } | null {
   const { map, rules } = ctx.obs
   const cls = classOf(rules, u)
-  if (dist(u.pos, pos) > cls.attackMaxMove) return { value: 0 }
+  if (dist(u.pos, pos) > cls.attackMaxMove) return null
   const ar = attackRange(map, rules, u.cls, pos)
+  // 追撃持ちは、敵が多少動いても届く前提で見積もる
+  const reach = cls.pursuit ? dist(pos, e.pos) <= cls.move + 1 : canStrike(map, rules, pos, e.pos, ar, isMeleeClass(rules, u.cls))
+  if (!reach) return null
+  const ec = classOf(rules, e)
+  const from = cls.pursuit ? e.pos : pos
+  const opts = { stationary: samePos(pos, u.pos), marked: !!e.marked, jammed: u.jammedUntil >= ctx.obs.turn }
+  const far = cls.pursuit && dist(pos, e.pos) > 1 ? 0.6 : 1
+  return { exp: expectedDamage(map, rules, cls, ec, from, e.pos, opts) * far, kill: killChance(map, rules, cls, ec, from, e.pos, hpLeft, opts) * far }
+}
+
+/** 決定済みの狙いの期待ダメージ（倒し切りの見積もりで味方の分を差し引くため） */
+function aimDamage(ctx: Ctx, u: Unit, pos: Pos, target: string): number {
+  const e = ctx.known.find((k) => k.unitId === target && k.age === 0)
+  if (!e) return 0
+  return strikeEstimate(ctx, u, pos, e, 1)?.exp ?? 0
+}
+
+/** 移動先 pos からの射撃の見込み（敵がその場に留まると仮定） */
+function fireValue(ctx: Ctx, u: Unit, pos: Pos): { value: number; target?: string } {
+  const { rules } = ctx.obs
+  const kw = ctx.p.killWeight ?? 0
   let value = 0
   let target: string | undefined
   for (const e of ctx.known) {
     if (e.age > 0) continue
-    // 追撃持ちは、敵が多少動いても届く前提で見積もる
-    const reach = cls.pursuit ? dist(pos, e.pos) <= cls.move + 1 : canStrike(map, rules, pos, e.pos, ar, isMeleeClass(rules, u.cls))
-    if (!reach) continue
     const ec = classOf(rules, e)
     const hp = e.hp ?? ec.hp
-    const exp =
-      expectedDamage(map, rules, cls, ec, cls.pursuit ? e.pos : pos, e.pos, { stationary: samePos(pos, u.pos), marked: !!e.marked, jammed: u.jammedUntil >= ctx.obs.turn }) *
-      (cls.pursuit && dist(pos, e.pos) > 1 ? 0.6 : 1)
+    const others = ctx.dmg.get(e.unitId) ?? 0
+    const est = strikeEstimate(ctx, u, pos, e, Math.max(1, Math.round(hp - others)))
+    if (!est) continue
+    const { exp } = est
     const kill = exp >= hp ? 1 + ec.cost * 0.5 : 1
     // マーク中の敵は次の手も見え続けるので、狙いを継続しやすい
-    const v = Math.min(1, exp / hp) * 3 * kill * 0.6 * (e.marked ? 1.15 : 1) * (1 + (ctx.p.focus ?? 0) * (ctx.targets.get(e.unitId) ?? 0))
+    let v = Math.min(1, exp / hp) * 3 * kill * 0.6 * (e.marked ? 1.15 : 1) * (1 + (ctx.p.focus ?? 0) * (ctx.targets.get(e.unitId) ?? 0))
+    if (kw) v += kw * est.kill * ec.cost
     if (v > value) (value = v), (target = e.unitId)
   }
   return { value, target }
