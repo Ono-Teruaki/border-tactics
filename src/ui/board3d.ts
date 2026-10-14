@@ -109,7 +109,7 @@ export class Board3D {
     // 字や光の筋をにじませる
     this.composer = new EffectComposer(this.renderer)
     this.composer.addPass(new RenderPass(this.scene, this.camera))
-    this.bloom = new UnrealBloomPass(new THREE.Vector2(256, 256), 0.75, 0.4, 0.4)
+    this.bloom = new UnrealBloomPass(new THREE.Vector2(256, 256), 0.35, 0.3, 0.7)
     this.composer.addPass(this.bloom)
     this.composer.addPass(new OutputPass())
 
@@ -252,7 +252,7 @@ export class Board3D {
     const col = spec.side === 0 ? C.me : C.en
     const body = new THREE.Mesh(
       new THREE.CylinderGeometry(0.34, 0.38, 0.08, 6),
-      new THREE.MeshStandardMaterial({ color: col, emissive: col, emissiveIntensity: 0.35, transparent: true, opacity: 0.3, depthWrite: false }),
+      new THREE.MeshStandardMaterial({ color: col, emissive: col, emissiveIntensity: 0.12, transparent: true, opacity: 0.3, depthWrite: false }),
     )
     body.position.y = 0.04
     body.castShadow = true
@@ -269,7 +269,7 @@ export class Board3D {
     reticle.position.y = 0.014
     reticle.name = 'reticle'
     const tag = new THREE.Sprite(new THREE.SpriteMaterial({ transparent: true, depthTest: false }))
-    tag.scale.set(1.0, 0.5, 1)
+    tag.scale.set(0.9, 0.5625, 1)
     tag.position.y = TAG_Y
     tag.renderOrder = 5
     g.add(body, rim, band, ring, reticle, tag)
@@ -384,9 +384,9 @@ export class Board3D {
 
   private setOpacity(g: THREE.Group, op: number) {
     const { body, band, rim, tag } = g.userData as { body: THREE.Mesh; band: THREE.Mesh; rim: THREE.LineSegments; tag: THREE.Sprite }
-    ;(body.material as THREE.MeshStandardMaterial).opacity = 0.3 * op
-    ;(band.material as THREE.MeshBasicMaterial).opacity = 0.85 * op
-    ;(rim.material as THREE.LineBasicMaterial).opacity = op
+    ;(body.material as THREE.MeshStandardMaterial).opacity = 0.22 * op
+    ;(band.material as THREE.MeshBasicMaterial).opacity = 0.5 * op
+    ;(rim.material as THREE.LineBasicMaterial).opacity = 0.7 * op
     tag.material.opacity = op
     body.castShadow = op > 0.5
     this.requestRender()
@@ -556,10 +556,10 @@ export class Board3D {
     const hit = new THREE.Color(0xffffff)
     this.tween(260, (t) => {
       mat.emissive.copy(hit).lerp(base, t)
-      mat.emissiveIntensity = 2.5 * (1 - t) + 0.35 * t
+      mat.emissiveIntensity = 2.5 * (1 - t) + 0.12 * t
     }).then(() => {
       mat.emissive.copy(base)
-      mat.emissiveIntensity = 0.35
+      mat.emissiveIntensity = 0.12
     })
   }
 
@@ -970,50 +970,66 @@ function canvasTex(c: HTMLCanvasElement) {
 
 
 /** 駒の上に浮かぶ小さなタグ（クラス記号 + HPバー / 何手前） */
-/** 駒の字：クラスの漢字を陣営色で光らせ、右下にHP。見失った敵は「? 2手前」 */
+/** 駒の札：クラスの漢字（陣営色の淡い色＋暗い縁取りで読みやすく）とHPバー。見失った敵は「? 2手前」 */
 function tagTexture(spec: PieceSpec) {
   const W = 256
-  const H = 128
+  const H = 160
   const c = document.createElement('canvas')
   c.width = W
   c.height = H
   const g = c.getContext('2d')!
   const col = hex(spec.side === 0 ? C.me : C.en)
+  const pale = spec.side === 0 ? '#d4f1ff' : '#ffd9d3'
   g.textAlign = 'center'
   g.textBaseline = 'middle'
+  g.lineJoin = 'round'
   if (spec.label) {
     g.font = '800 30px system-ui, sans-serif'
     g.lineWidth = 8
     g.strokeStyle = C.ink
-    g.strokeText(`? ${spec.label}`, W / 2, 26)
+    g.strokeText(`? ${spec.label}`, W / 2, 24)
     g.fillStyle = col
-    g.fillText(`? ${spec.label}`, W / 2, 26)
+    g.fillText(`? ${spec.label}`, W / 2, 24)
   }
-  g.font = '900 72px "Hiragino Sans", system-ui, sans-serif'
-  g.lineWidth = 12
+  g.font = '900 76px "Hiragino Sans", "Noto Sans JP", "Yu Gothic", system-ui, sans-serif'
+  g.lineWidth = 14
   g.strokeStyle = C.ink
-  g.strokeText(spec.kanji, W / 2, 78)
-  g.shadowColor = col
-  g.shadowBlur = spec.ghost ? 0 : 16
-  g.fillStyle = col
-  g.fillText(spec.kanji, W / 2, 78)
-  g.shadowBlur = 0
-  if (!spec.ghost) {
-    const r = spec.hp === null ? 1 : Math.max(0, Math.min(1, spec.hp / spec.maxHp))
-    g.font = '800 30px system-ui, sans-serif'
-    g.textAlign = 'left'
-    g.lineWidth = 7
-    g.strokeStyle = C.ink
-    const t = spec.hp === null ? '?' : String(spec.hp)
-    g.strokeText(t, W / 2 + 42, 96)
-    g.fillStyle = r > 0.5 ? '#e3f4ff' : r > 0.25 ? '#ffc247' : '#ff7a6a'
-    g.fillText(t, W / 2 + 42, 96)
-  }
+  g.strokeText(spec.kanji, W / 2, 80)
+  g.lineWidth = 3
+  g.strokeStyle = col
+  g.strokeText(spec.kanji, W / 2, 80)
+  g.fillStyle = spec.ghost ? col : pale
+  g.fillText(spec.kanji, W / 2, 80)
   if (spec.marked) {
     g.beginPath()
-    g.arc(W / 2 - 52, 52, 9, 0, Math.PI * 2)
+    g.arc(W / 2 - 56, 52, 10, 0, Math.PI * 2)
     g.fillStyle = '#3ddc84'
     g.fill()
+  }
+  if (!spec.ghost) {
+    // HPバー（バー＋数字）
+    const x0 = 44
+    const bw = 120
+    const y0 = 128
+    g.beginPath()
+    g.roundRect(x0 - 8, y0 - 15, W - 2 * (x0 - 8), 30, 15)
+    g.fillStyle = 'rgba(8,18,32,0.88)'
+    g.fill()
+    g.beginPath()
+    g.roundRect(x0, y0 - 7, bw, 14, 7)
+    g.fillStyle = 'rgba(255,255,255,0.15)'
+    g.fill()
+    if (spec.hp !== null && spec.hp > 0) {
+      const r = Math.max(0, Math.min(1, spec.hp / spec.maxHp))
+      g.beginPath()
+      g.roundRect(x0, y0 - 7, Math.max(10, bw * r), 14, 7)
+      g.fillStyle = r > 0.5 ? col : r > 0.25 ? '#ffc247' : '#ff7a6a'
+      g.fill()
+    }
+    g.font = '800 24px system-ui, sans-serif'
+    g.textAlign = 'right'
+    g.fillStyle = '#e3f4ff'
+    g.fillText(spec.hp === null ? '?' : String(spec.hp), W - 40, y0 + 1)
   }
   return canvasTex(c)
 }
