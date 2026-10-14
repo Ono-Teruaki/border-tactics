@@ -427,7 +427,7 @@ class Battle {
     this.busy = true
     this.selected = null
     const myOrders: Order[] = this.me().map((u) => ({ unitId: u.id, dest: { ...this.destOf(u) }, target: this.orders.get(u.id)?.target }))
-    const cpuOrders = decideOrders(observe(this.state, 1), this.aiRng, AI_PRESETS.cpu)
+    const cpuOrders = decideOrders(observe(this.state, 1), this.aiRng, AI_PRESETS.strong)
     this.turns.push([structuredClone(myOrders), structuredClone(cpuOrders)])
     // 解決前の表示状態（プレイヤーが知っている情報だけ）
     const disp = new Map<string, PieceSpec>(this.pieceSpecs(this.shownIntel).map((p) => [p.id, { ...p, selected: false, targeted: false }]))

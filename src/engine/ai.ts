@@ -53,15 +53,15 @@ export const AI_PRESETS: Record<string, AiParams> = {
   cpu: { name: 'cpu', aggression: 1, caution: 1, scouting: 0.6, roofPref: 0.6, rush: 0, evade: 0, memory: 4, noise: 0.3 },
   aggressive: { name: 'aggressive', aggression: 1.6, caution: 0.5, scouting: 0.4, roofPref: 0.4, rush: 0, evade: 0, memory: 4, noise: 0.3 },
   cautious: { name: 'cautious', aggression: 0.7, caution: 1.8, scouting: 0.8, roofPref: 1, rush: 0, evade: 0, memory: 4, noise: 0.3 },
+  /** 自動調整した重み（sim/variants/ai-tuned-v0102.json）。ゲームの相手に使う */
+  strong: { name: 'strong', memory: 4, noise: 0.3, aggression: 0.976, caution: 2.543, scouting: 0.061, roofPref: 0.126, rush: 0.038, evade: 0.492, fireWeight: 1.367, cohesion: 0.503, focus: 0.718, jam: 0.567, blob: 0.696, killWeight: 0.362 },
   random: { name: 'random', aggression: 0, caution: 0, scouting: 0, roofPref: 0, rush: 0, evade: 0, memory: 0, noise: 1, random: true },
 }
 
 /** CPU が使う編成候補 */
 export const CPU_COMPS: string[][] = [
-  ['attacker', 'gunner', 'sniper', 'scout'],
-  ['attacker', 'attacker', 'gunner', 'sniper'],
-  ['gunner', 'gunner', 'sniper', 'scout'],
-  ['attacker', 'attacker', 'gunner', 'scout'],
+  // 今のメタの1位（狙斥擲護 SRXD）
+  ['sniper', 'scout', 'grenadier', 'guardian'],
 ]
 
 interface Known extends Intel {
