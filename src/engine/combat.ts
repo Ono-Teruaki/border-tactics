@@ -132,6 +132,22 @@ export function expectedDamage(map: MapDef, rules: RulesConfig, atkCls: UnitClas
   return (chance / 100) * atkCls.shots * Math.max(1, baseDamage(rules, atkCls.atk, defCls.def, atkCls.pen))
 }
 
+/** 残りHP hpLeft の敵を、この1手で倒し切れる確率（弾ごとの命中を二項分布で、ダメージは平均値で見積もる） */
+export function killChance(map: MapDef, rules: RulesConfig, atkCls: UnitClass, defCls: UnitClass, from: Pos, target: Pos, hpLeft: number, opts: HitOpts = {}): number {
+  if (hpLeft <= 0) return 1
+  const p = hitChance(map, rules, atkCls, from, target, opts).chance / 100
+  const need = Math.ceil(hpLeft / Math.max(1, baseDamage(rules, atkCls.atk, defCls.def, atkCls.pen)))
+  const n = atkCls.shots
+  if (need > n) return 0
+  let total = 0
+  let comb = 1
+  for (let i = 0; i <= n; i++) {
+    if (i > 0) comb = (comb * (n - i + 1)) / i
+    if (i >= need) total += comb * p ** i * (1 - p) ** (n - i)
+  }
+  return total
+}
+
 export function damageRange(rules: RulesConfig, atk: number, def: number, pen = 0): [number, number] {
   const b = baseDamage(rules, atk, def, pen)
   const v = rules.combat.variance

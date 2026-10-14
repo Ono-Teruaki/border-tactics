@@ -32,6 +32,7 @@ const KNOBS: { key: keyof AiParams; label: string; lo: number; hi: number; def: 
   { key: 'focus', label: '集中砲火', lo: 0, hi: 1.5, def: 0 },
   { key: 'jam', label: '屋上に登って妨害', lo: 0, hi: 3, def: 1 },
   { key: 'blob', label: '団塊（全員が味方の隣に）', lo: 0, hi: 2, def: 0 },
+  { key: 'killWeight', label: '倒し切り（倒せる確率 × コスト）', lo: 0, hi: 6, def: 0 },
 ]
 
 interface Job {
