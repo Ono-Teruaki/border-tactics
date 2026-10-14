@@ -98,7 +98,14 @@ export interface RulesConfig {
      */
     formula: 'ratio' | 'armor'
     armorK: number
-    /** 遮蔽による命中率低下（%） */
+    /**
+     * 遮蔽の決め方
+     * - exposure: 撃ち手から見て体が隠れている割合 × coverMax（全身見えていれば 0）
+     * - adjacent: 対象の隣のビルの向きで half / light（旧方式）
+     */
+    coverModel: 'exposure' | 'adjacent'
+    coverMax: number
+    /** 旧方式（adjacent）の命中率低下（%） */
     coverHalf: number
     coverLight: number
     /** 屋上から地上へ撃つときの命中率ボーナス / 地上から屋上へのペナルティ */
