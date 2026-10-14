@@ -1,11 +1,11 @@
 // 編成メタの網羅シミュレーション（全編成 × 全編成 × マップ、先後入れ替え）
-//   node sim/meta.ts [--variant sim/variants/x.json] [--maps city9,city11] [--out name]
+//   node sim/meta.ts [--variant sim/variants/x.json] [--maps block9,alley11] [--out name]
 import { readFileSync, mkdirSync, writeFileSync } from 'node:fs'
 import { basename } from 'node:path'
 import { availableParallelism } from 'node:os'
 import { Worker, isMainThread, parentPort, workerData } from 'node:worker_threads'
 import { AI_PRESETS, type AiParams } from '../src/engine/ai.ts'
-import { MAPS } from '../src/engine/maps.ts'
+import { CURRENT_MAP_IDS, MAPS } from '../src/engine/maps.ts'
 import { DEFAULT_RULES, mergeRules, type RulesOverride } from '../src/engine/rules.ts'
 import type { RulesConfig } from '../src/engine/types.ts'
 import { allComps, compLabel, playMatch } from './lib.ts'
@@ -50,7 +50,7 @@ if (!isMainThread) {
   const arg = (n: string, d?: string) => (args.includes(`--${n}`) ? args[args.indexOf(`--${n}`) + 1] : d)
   const variantPath = arg('variant')
   const variant: Variant = variantPath ? JSON.parse(readFileSync(variantPath, 'utf8')) : {}
-  const mapIds = (arg('maps') ?? variant.maps?.join(',') ?? MAPS.map((m) => m.id).join(',')).split(',')
+  const mapIds = (arg('maps') ?? variant.maps?.join(',') ?? CURRENT_MAP_IDS.join(',')).split(',')
   const reps = Number(arg('reps', '2'))
   const name = arg('out', `meta-${variantPath ? basename(variantPath, '.json') : 'default'}`)!
   const rules: RulesConfig = setup(variant)
