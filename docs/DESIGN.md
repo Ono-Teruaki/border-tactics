@@ -98,6 +98,7 @@
 - `npm run sim [-- --games N --quick --variant sim/variants/x.json]`: CPU vs ランダム、陣地バイアス、クリア可能性、編成の相性
 - `npm run meta [-- --variant sim/variants/x.json --reps 2]`: 全126編成の総当たり（3マップ、94,500戦、約30秒）
 - `node sim/replay.ts record.json`: 棋譜を再生する
+- `node sim/sightlines.ts [--cls sniper] [--map city9]`: マップの射線分析。各屋上・地上から撃てるマス／見えるマスの数と、自陣から何手で着くか
 - variant には、ルールの差分（`rules.ts` と同じ形）と、任意で `maps`・`ai`（CPUのパラメータ）を書ける
 - 結果は `sim/results/<名前>.md` と `.json` に出る
 - CPUは自軍から見える情報（Observation）だけで判断する。マークした敵を優先して撃ち、スカウトは見失った敵の再発見・味方が撃てる位置の敵のマーク・透視で覗ける位置を選ぶ

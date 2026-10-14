@@ -1,0 +1,208 @@
+* {
+  box-sizing: border-box;
+  margin: 0;
+}
+html,
+body {
+  height: 100%;
+  overflow: hidden;
+  font-family: system-ui, -apple-system, 'Hiragino Sans', sans-serif;
+}
+#stage {
+  position: fixed;
+  inset: 0;
+}
+#stage canvas {
+  display: block;
+}
+
+/* 盤面は全画面。UI は上下に薄く重ねる */
+.hud {
+  position: fixed;
+  left: 12px;
+  right: 12px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.top {
+  top: max(12px, env(safe-area-inset-top));
+}
+.bottom {
+  bottom: max(14px, env(safe-area-inset-bottom));
+  padding: 10px 10px 10px 14px;
+  border-radius: 18px;
+}
+.turn {
+  font-weight: 800;
+  font-size: 18px;
+}
+.turn small {
+  font-weight: 500;
+  opacity: 0.6;
+  margin-left: 2px;
+}
+.score {
+  display: flex;
+  gap: 6px;
+  font-weight: 900;
+  font-size: 18px;
+}
+#themes {
+  margin-left: auto;
+  display: flex;
+  gap: 4px;
+}
+#themes a {
+  font-size: 11px;
+  padding: 5px 8px;
+  border-radius: 999px;
+  text-decoration: none;
+  color: inherit;
+  opacity: 0.55;
+}
+#themes a.on {
+  opacity: 1;
+  font-weight: 700;
+}
+.unit {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.unit small {
+  display: block;
+  font-size: 11px;
+  opacity: 0.7;
+}
+.badge {
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-weight: 900;
+}
+.odds {
+  margin-left: auto;
+  text-align: right;
+}
+.odds b {
+  font-size: 22px;
+}
+.go {
+  border: 0;
+  font: inherit;
+  font-weight: 800;
+  font-size: 16px;
+  padding: 14px 22px;
+  border-radius: 14px;
+}
+
+/* ---------- ① 作戦卓ホログラム ---------- */
+body.holo {
+  background: #04070c;
+  color: #cdefff;
+}
+.holo .score .me {
+  color: #3cf0ff;
+}
+.holo .score .en {
+  color: #ff6a4a;
+}
+.holo #themes a.on {
+  background: #0e3346;
+  color: #7ff5ff;
+}
+.holo .bottom {
+  background: rgba(6, 20, 32, 0.72);
+  border: 1px solid #1b5a78;
+  backdrop-filter: blur(6px);
+}
+.holo .badge {
+  border: 1.5px solid #3cf0ff;
+  color: #3cf0ff;
+  box-shadow: 0 0 12px #3cf0ff66;
+}
+.holo .odds b {
+  color: #7ff5ff;
+  text-shadow: 0 0 10px #3cf0ff;
+}
+.holo .go {
+  background: #3cf0ff;
+  color: #03141c;
+  box-shadow: 0 0 18px #3cf0ff88;
+}
+
+/* ---------- ② ミニチュアのジオラマ ---------- */
+body.diorama {
+  background: #e9eef0;
+  color: #2b2f36;
+}
+.diorama .score .me {
+  color: #2f6fe0;
+}
+.diorama .score .en {
+  color: #d8473a;
+}
+.diorama #themes a.on {
+  background: #ffffff;
+  box-shadow: 0 2px 8px #0002;
+}
+.diorama .top {
+  text-shadow: 0 1px 0 #fff;
+}
+.diorama .bottom {
+  background: rgba(255, 255, 255, 0.86);
+  box-shadow: 0 8px 28px #0003;
+  backdrop-filter: blur(8px);
+}
+.diorama .badge {
+  background: #2f6fe0;
+  color: #fff;
+}
+.diorama .go {
+  background: #2b2f36;
+  color: #fff;
+}
+
+/* ---------- ③ 卓上の作戦地図 ---------- */
+body.paper {
+  background: #2a1d15;
+  color: #f3ead7;
+  font-family: 'Hiragino Mincho ProN', 'Yu Mincho', serif;
+}
+.paper .score .me {
+  color: #8fb3e8;
+}
+.paper .score .en {
+  color: #e98a7c;
+}
+.paper #themes a {
+  font-family: system-ui, sans-serif;
+}
+.paper #themes a.on {
+  background: #f3ead7;
+  color: #2a1d15;
+}
+.paper .bottom {
+  background: #f3ead7;
+  color: #2b2620;
+  border-radius: 4px;
+  box-shadow: 0 10px 24px #0008;
+}
+.paper .badge {
+  border: 2px solid #2f5d9e;
+  color: #2f5d9e;
+  border-radius: 6px;
+  transform: rotate(-4deg);
+}
+.paper .odds b {
+  color: #b23a2e;
+}
+.paper .go {
+  background: #2b2620;
+  color: #f3ead7;
+  border-radius: 4px;
+}
