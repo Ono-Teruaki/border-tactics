@@ -33,6 +33,8 @@ export interface UnitClass {
   markOnSight: boolean
   /** 透視: この距離以内の敵は建物越しでも見える（0 = なし） */
   sonar: number
+  /** 妨害（ジャマー）: 地上から屋上へ登った手に、見えている敵の視界と命中率を下げる */
+  jamOnClimb: boolean
   /** 制圧射撃: 1回の攻撃で2発以上当てた敵を制圧する */
   suppress: boolean
   /** 狙撃態勢: 移動しなかった手は命中率アップ・遮蔽の影響半減 */
@@ -136,6 +138,10 @@ export interface RulesConfig {
     maxPerClass: number
     /** 隠密になる条件: descend = 屋上から地上へ降りた手 / noAttack = 狙いを指定しなかった手 */
     stealthTrigger: 'descend' | 'noAttack'
+    /** 妨害の効果: 視界の低下、命中率の低下（%）、持続（手。1 = 次の手の終わりまで） */
+    jamVision: number
+    jamAcc: number
+    jamDuration: number
   }
   vision: {
     /** 屋上から見ても、ビルの裏側に張り付いた地上のマスは見えない */
@@ -172,6 +178,8 @@ export interface Unit {
   markCooldownUntil: number
   /** この手まで隠密 */
   stealthUntil: number
+  /** この手まで妨害されている（視界・命中率が下がる） */
+  jammedUntil: number
 }
 
 /** 命令: 移動先と、狙う敵（任意）。移動後に射程・射線が通り、見えていれば撃つ */
@@ -229,6 +237,8 @@ export type GameEvent =
   | { type: 'suppress'; unitId: string; targetId: string }
   | { type: 'heal'; unitId: string; targets: { id: string; amount: number }[] }
   | { type: 'pursuit'; unitId: string; from: Pos; to: Pos }
+  /** 妨害: ジャマー unitId が屋上に登り、見えていた敵 targets を妨害した */
+  | { type: 'jam'; unitId: string; targets: string[] }
   /** 後送: 衛生兵 unitId が味方 allyId を from から to へ引っ張ってきた */
   | { type: 'evac'; unitId: string; allyId: string; from: Pos; to: Pos }
 

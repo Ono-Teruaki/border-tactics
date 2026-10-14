@@ -77,6 +77,8 @@ export interface HitOpts {
   marked?: boolean
   /** 撃ち手が制圧されている */
   suppressed?: boolean
+  /** 撃ち手が妨害されている */
+  jammed?: boolean
 }
 
 /** 1発あたりの命中率（%）。距離による減衰・懐・遮蔽・高低差・スキル */
@@ -90,6 +92,7 @@ export function hitChance(map: MapDef, rules: RulesConfig, cls: UnitClass, from:
   if (steady) p += sk.steadyAcc
   if (opts.marked) p += sk.markAccBonus
   if (opts.suppressed) p -= sk.suppressAcc
+  if (opts.jammed) p -= sk.jamAcc
   const coverMul = steady ? 0.5 : 1
   let cover: CoverLevel
   let coverPenalty = 0

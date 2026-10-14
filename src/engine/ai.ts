@@ -36,6 +36,8 @@ export interface AiParams {
   cohesion?: number
   /** 集中砲火: 味方がすでに狙っている敵を狙う価値の上乗せ（既定 0） */
   focus?: number
+  /** ジャマー: 屋上に登って敵を妨害する価値の重み（既定 1） */
+  jam?: number
   random?: boolean
 }
 
@@ -146,7 +148,7 @@ function fireValue(ctx: Ctx, u: Unit, pos: Pos): { value: number; target?: strin
     const ec = classOf(rules, e)
     const hp = e.hp ?? ec.hp
     const exp =
-      expectedDamage(map, rules, cls, ec, cls.pursuit ? e.pos : pos, e.pos, { stationary: samePos(pos, u.pos), marked: !!e.marked }) *
+      expectedDamage(map, rules, cls, ec, cls.pursuit ? e.pos : pos, e.pos, { stationary: samePos(pos, u.pos), marked: !!e.marked, jammed: u.jammedUntil >= ctx.obs.turn }) *
       (cls.pursuit && dist(pos, e.pos) > 1 ? 0.6 : 1)
     const kill = exp >= hp ? 1 + ec.cost * 0.5 : 1
     // マーク中の敵は次の手も見え続けるので、狙いを継続しやすい
@@ -258,6 +260,16 @@ function bestOrder(ctx: Ctx, u: Unit): Order {
     for (const e of known) nearest = Math.min(nearest, dist(pos, e.pos) + e.age * 0.5)
     const progress = Number.isFinite(nearest) ? -Math.abs(nearest - ideal) * 0.4 : 0
 
+    // ジャマー: 地上から屋上に登る手は、そこから見える敵を妨害できる。射手と索敵役ほど価値が高い
+    let jam = 0
+    if (cls.jamOnClimb && t.visionBonus > 0 && terrainId(map, u.pos) !== 'building') {
+      for (const e of known) {
+        if (e.age > 1 || !canSee(map, rules, u.cls, pos, e.pos)) continue
+        const ec = classOf(rules, e)
+        jam += ec.range > 1 || ec.markOnSight ? 1.2 : 0.5
+      }
+    }
+
     // 支援役は味方の近くにいたい
     let cohesion = 0
     if (isSupport) for (const [id, ap] of ctx.planned) if (id !== u.id && chebyshev(ap, pos) <= 1) cohesion += ctx.p.cohesion ?? 0.4
@@ -265,7 +277,7 @@ function bestOrder(ctx: Ctx, u: Unit): Order {
     const roof = t.visionBonus > 0 && (cls.range > 1 || isScout) ? 1 + visionRange(map, rules, u.cls, pos) * 0.05 : 0
     const action = Math.max(fire.value * (p.fireWeight ?? 1.5), sup)
     const score =
-      p.aggression * (action + progress) - p.caution * threat * 0.6 + p.scouting * scout + p.roofPref * roof + p.rush * rush + p.evade * evade + cohesion + rng.next() * p.noise
+      p.aggression * (action + progress) - p.caution * threat * 0.6 + p.scouting * scout + p.roofPref * roof + p.rush * rush + p.evade * evade + cohesion + (p.jam ?? 1) * jam + rng.next() * p.noise
     if (!best || score > best.score) best = { score, pos, target: sup > fire.value * (p.fireWeight ?? 1.5) ? undefined : fire.target }
   }
   const dest = best?.pos ?? { ...u.pos }

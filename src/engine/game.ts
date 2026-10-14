@@ -11,7 +11,7 @@ export function createGame(map: MapDef, rules: RulesConfig, comps: [string[], st
     comp.forEach((cls, i) => {
       const c = rules.classes[cls]
       if (!c) throw new Error(`unknown class ${cls}`)
-      units.push({ id: `${side}-${i}`, side, cls, pos: { ...map.spawns[side][i] }, hp: c.hp, alive: true, markedUntil: 0, suppressedUntil: 0, markCooldownUntil: 0, stealthUntil: 0 })
+      units.push({ id: `${side}-${i}`, side, cls, pos: { ...map.spawns[side][i] }, hp: c.hp, alive: true, markedUntil: 0, suppressedUntil: 0, markCooldownUntil: 0, stealthUntil: 0, jammedUntil: 0 })
     })
   }
   const state: GameState = { map, rules, units, turn: 1, kills: [0, 0], killCost: [0, 0], intel: [{}, {}], over: false, history: [] }
@@ -98,13 +98,16 @@ export function visibleEnemyIds(state: GameState, side: Side, atTurn = state.tur
   const out = new Set<string>()
   for (const e of state.units) {
     if (!e.alive || e.side === side) continue
-    if (e.markedUntil >= atTurn || mine.some((m) => canSee(map, rules, m.cls, m.pos, e.pos, stealthOf(rules, e, atTurn)))) out.add(e.id)
+    if (e.markedUntil >= atTurn || mine.some((m) => canSee(map, rules, m.cls, m.pos, e.pos, stealthOf(rules, e, atTurn) + jamOf(rules, m, atTurn)))) out.add(e.id)
   }
   return out
 }
 
 export const isSuppressed = (u: { suppressedUntil: number }, turn: number) => u.suppressedUntil >= turn
 export const isMarked = (u: { markedUntil: number }, turn: number) => u.markedUntil >= turn
+export const isJammed = (u: { jammedUntil: number }, turn: number) => u.jammedUntil >= turn
+/** 見る側が妨害されているときの視界の減り幅 */
+const jamOf = (rules: RulesConfig, u: Unit, turn: number) => (isJammed(u, turn) ? rules.skills.jamVision : 0)
 
 export function moveOf(rules: RulesConfig, u: Unit, turn: number): number {
   return Math.max(0, classOf(rules, u).move - (isSuppressed(u, turn) ? rules.skills.suppressMove : 0))
@@ -243,13 +246,23 @@ export function resolveTurn(state: GameState, orders: [Order[], Order[]], rng: R
     if (rules.skills.stealthTrigger === 'descend' ? fromRoof && onGround : supporting(u)) u.stealthUntil = T + 1
   }
 
+  // --- 妨害: 地上から屋上へ登ったジャマーが、見えている敵の視界と命中率を下げる ---
+  for (const u of alive) {
+    if (!classOf(rules, u).jamOnClimb) continue
+    if (terrainId(map, origin.get(u.id)!) === 'building' || terrainId(map, u.pos) !== 'building') continue
+    const seen = alive.filter((e) => e.side !== u.side && canSee(map, rules, u.cls, u.pos, e.pos, stealthOf(rules, e, T)))
+    if (!seen.length) continue
+    for (const e of seen) e.jammedUntil = Math.max(e.jammedUntil, T + rules.skills.jamDuration)
+    events.push({ type: 'jam', unitId: u.id, targets: seen.map((e) => e.id) })
+  }
+
   // --- 観測: スカウトが視界内の敵にマーク ---
   const sk = rules.skills
   for (const u of alive) {
     const c = classOf(rules, u)
     if (!c.markOnSight || u.markCooldownUntil >= T) continue
     const seen = alive
-      .filter((e) => e.side !== u.side && canSee(map, rules, u.cls, u.pos, e.pos, stealthOf(rules, e, T)))
+      .filter((e) => e.side !== u.side && canSee(map, rules, u.cls, u.pos, e.pos, stealthOf(rules, e, T) + jamOf(rules, u, T)))
       .sort((a, b) => dist(u.pos, a.pos) - dist(u.pos, b.pos))
       .slice(0, sk.markPerTurn)
     if (!seen.length) continue
@@ -284,6 +297,7 @@ export function resolveTurn(state: GameState, orders: [Order[], Order[]], rng: R
       stationary: samePos(origin.get(u.id)!, u.pos),
       marked: isMarked(t, T),
       suppressed: isSuppressed(u, T),
+      jammed: isJammed(u, T),
     })
     const shots: ShotResult[] = []
     const downed: Unit[] = []
