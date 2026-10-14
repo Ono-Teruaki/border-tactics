@@ -881,92 +881,30 @@ function holo2() {
     scene.add(top)
   }
 
-  // 駒：①ホロの「六角の台座＋光る字」を基本に、字を陣営色の丸に乗せて読みやすくする
-  const token = (p: Piece, ghost = false) =>
-    canvas(160, 160, (g) => {
-      const col = hex(p.side === 0 ? ME : EN)
-      g.beginPath()
-      g.arc(80, 80, 64, 0, Math.PI * 2)
-      if (ghost) {
-        g.setLineDash([12, 9])
-        g.strokeStyle = col
-        g.lineWidth = 7
-        g.stroke()
-      } else {
-        g.fillStyle = col
-        g.fill()
-        g.strokeStyle = 'rgba(255,255,255,0.9)'
-        g.lineWidth = 6
-        g.stroke()
-      }
-      g.fillStyle = ghost ? col : '#ffffff'
-      g.font = '900 78px "Hiragino Sans", system-ui'
-      g.textAlign = 'center'
-      g.textBaseline = 'middle'
-      g.fillText(kanji(p.cls), 80, 86)
-    })
-  const hpBar = (p: Piece) =>
-    canvas(200, 48, (g) => {
-      const col = hex(p.side === 0 ? ME : EN)
-      const max = DEFAULT_RULES.classes[p.cls].hp
-      g.fillStyle = 'rgba(8,18,32,0.85)'
-      g.beginPath()
-      g.roundRect(2, 6, 196, 36, 18)
-      g.fill()
-      g.fillStyle = 'rgba(255,255,255,0.15)'
-      g.beginPath()
-      g.roundRect(12, 16, 120, 16, 8)
-      g.fill()
-      g.fillStyle = p.hp / max > 0.5 ? col : '#ffc247'
-      g.beginPath()
-      g.roundRect(12, 16, Math.max(16, (120 * p.hp) / max), 16, 8)
-      g.fill()
-      g.fillStyle = '#e8f6ff'
-      g.font = '800 26px system-ui'
-      g.textAlign = 'center'
-      g.textBaseline = 'middle'
-      g.fillText(String(p.hp), 166, 25)
-    })
-  const glowTex = canvas(128, 128, (g) => {
-    const gr = g.createRadialGradient(64, 64, 4, 64, 64, 64)
-    gr.addColorStop(0, 'rgba(255,255,255,0.9)')
-    gr.addColorStop(1, 'rgba(255,255,255,0)')
-    g.fillStyle = gr
-    g.fillRect(0, 0, 128, 128)
-  })
+  // 駒：①ホロと同じ「半透明の六角の台座＋光の柱＋浮かぶ光る字」
   for (const p of pieces) {
     const col = p.side === 0 ? ME : EN
     const base = world(p.pos)
     const g = new THREE.Group()
     g.position.copy(base)
-    const rimGeo = new THREE.EdgesGeometry(new THREE.CylinderGeometry(0.38, 0.38, 0.001, 6))
-    if (p.ghost) {
-      // 見失った敵：点線の字＋輪郭だけの台座
-      const rimLine = new THREE.LineSegments(rimGeo, new THREE.LineBasicMaterial({ color: col, transparent: true, opacity: 0.6 }))
-      rimLine.position.y = 0.02
-      g.add(rimLine)
-      scene.add(g)
-      sprite(token(p, true), 0.42, 0.42, world(p.pos, 0.45), 0.8)
-      sprite(label(`? ${p.ghost}手前`, { font: '800 40px system-ui', fill: hex(col), bg: 'rgba(8,18,32,0.85)', w: 260 }), 0.6, 0.22, world(p.pos, 0.8))
-      continue
-    }
-    const pool = new THREE.Mesh(new THREE.PlaneGeometry(1.1, 1.1), new THREE.MeshBasicMaterial({ map: glowTex, color: col, transparent: true, opacity: 0.25, depthWrite: false, blending: THREE.AdditiveBlending }))
-    pool.rotation.x = -Math.PI / 2
-    pool.position.y = 0.006
-    const plate = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.36, 0.39, 0.1, 6),
-      new THREE.MeshStandardMaterial({ color: col, roughness: 0.35, metalness: 0.1, emissive: col, emissiveIntensity: 0.25 }),
-    )
-    plate.position.y = 0.05
-    plate.castShadow = true
-    const rimLine = new THREE.LineSegments(rimGeo, new THREE.LineBasicMaterial({ color: 0xffffff }))
-    rimLine.position.y = 0.101
-    const beam = new THREE.Mesh(new THREE.CylinderGeometry(0.015, 0.015, 0.3, 6), new THREE.MeshBasicMaterial({ color: col }))
-    beam.position.y = 0.25
-    g.add(pool, plate, rimLine, beam)
+    const op = p.ghost ? 0.35 : 1
+    const plate = new THREE.Mesh(new THREE.CylinderGeometry(0.34, 0.38, 0.08, 6), new THREE.MeshBasicMaterial({ color: col, transparent: true, opacity: 0.18 * op }))
+    plate.position.y = 0.04
+    g.add(plate)
+    const rimLine = new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.CylinderGeometry(0.38, 0.38, 0.001, 6)), new THREE.LineBasicMaterial({ color: col, transparent: true, opacity: op }))
+    rimLine.position.y = 0.08
+    g.add(rimLine)
+    const beam = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, 0.5, 6), new THREE.MeshBasicMaterial({ color: col, transparent: true, opacity: 0.85 * op }))
+    beam.position.y = 0.33
+    if (!p.ghost) g.add(beam)
     scene.add(g)
-    sprite(token(p), 0.42, 0.42, world(p.pos, 0.55))
-    sprite(hpBar(p), 0.5, 0.12, world(p.pos, 0.86))
+    if (p.ghost) {
+      sprite(label(`? ${p.ghost}手前`, { font: '700 46px system-ui', fill: hex(col), w: 320 }), 0.95, 0.29, base.clone().add(new THREE.Vector3(0, 0.45, 0)), 0.85)
+      sprite(label(kanji(p.cls), { font: '900 64px system-ui', fill: hex(col) }), 0.6, 0.23, base.clone().add(new THREE.Vector3(0, 0.2, 0)), 0.45)
+    } else {
+      sprite(label(kanji(p.cls), { font: '900 70px system-ui', fill: hex(col), stroke: '#0a1424' }), 0.66, 0.25, base.clone().add(new THREE.Vector3(0, 0.66, 0)))
+      sprite(label(`${p.hp}`, { font: '700 44px system-ui', fill: '#e3f4ff' }), 0.5, 0.19, base.clone().add(new THREE.Vector3(0.36, 0.5, 0)), 0.9)
+    }
   }
 
   // 射線：光の筋＋照準＋命中率
@@ -984,12 +922,12 @@ function holo2() {
   ret.rotation.x = -Math.PI / 2
   ret.position.copy(world(TARGET.pos, 0.02))
   scene.add(ret)
-  sprite(label(`命中 ${HIT}%`, { font: '900 46px system-ui', fill: '#0d1b2e', bg: '#ffd25a', w: 280 }), 0.8, 0.28, a.clone().lerp(b, 0.5).add(new THREE.Vector3(0, 0.38, 0)))
+  sprite(label(`命中 ${HIT}%`, { font: '900 46px system-ui', fill: '#ffd25a', bg: 'rgba(10,20,36,0.92)', w: 280 }), 0.8, 0.28, a.clone().lerp(b, 0.5).add(new THREE.Vector3(0, 0.38, 0)))
 
   fitCamera(0.22, 0.9)
   const composer = new EffectComposer(renderer)
   composer.addPass(new RenderPass(scene, camera))
-  composer.addPass(new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 0.45, 0.35, 0.55))
+  composer.addPass(new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 0.75, 0.4, 0.4))
   composer.addPass(new OutputPass())
   return () => composer.render()
 }
