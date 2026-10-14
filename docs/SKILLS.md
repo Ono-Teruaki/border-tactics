@@ -55,6 +55,8 @@
 | 16 / 5 / 3 / 2手 | 76.9% | 270ms |
 
 - 最悪の結果の重み（0 / 0.3 / 0.7）は誤差の範囲
+- 使い分け: メタは従来 CPU で回し、対策の評価に先読みを使う（`node sim/versus.ts --comp AMJD --vs SRXD --search`）
+- 評価の方針は `evalKill`（撃破の重み）・`evalHp`（被弾を嫌う強さ）・`evalAdvance`（前に出る強さ）で変えられる。手の候補は CPU の重み（`--ai`）を中心に作る
 
 ### v0.11.2 レーダー塔（v0.11.3 で既定オフ、`sim/results/meta-v0112-radar-unique.md`）
 - 実際に遊んで不要と判断したので、v0.11.3 から `rules.radar: false`（コードとマップの位置は残す）
