@@ -25,7 +25,7 @@ function skillText(c: UnitClass): string {
   if (c.evac) t.push('後送: 狙わない手は、移動前に隣にいた一番傷の深い味方を交戦の後で自分の隣へ連れ戻す')
   if (c.stealth) t.push(`隠密: ${rules.skills.stealthTrigger === 'descend' ? '屋上から降りた手' : '狙わない手'}と次の手は、敵から見つかる距離-${c.stealth}`)
   if (c.arc) t.push('曲射: ビル越しに撃て、遮蔽を無視する（味方が見ている敵なら狙える）')
-  if (c.blast) t.push(`爆風: 当たると、狙った敵の上下左右の敵にも${Math.round(c.blast * 100)}%のダメージ。防護兵は庇えない`)
+  if (c.blast) t.push(`爆風: 当たると、狙った敵の${rules.skills.blastShape === 'square' ? '周囲8マス' : '上下左右'}の敵にも${Math.round(c.blast * 100)}%のダメージ。防護兵は庇えない`)
   if (c.guardReduce) t.push(`カバーリング: 狙わない手は周囲8マスの味方の被弾を肩代わり（-${Math.round(c.guardReduce * 100)}%）`)
   if (c.closePenalty) t.push(`懐に弱い: 隣接した敵への命中-${c.closePenalty}`)
   return t.join(' ／ ')

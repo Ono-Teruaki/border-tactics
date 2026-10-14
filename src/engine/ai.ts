@@ -1,5 +1,5 @@
 import { baseDamage, expectedDamage, hitChance, killChance } from './combat.ts'
-import { attackRange, canSee, canStrike, isMeleeClass, chebyshev, classOf, reachableFor, visionRange } from './game.ts'
+import { attackRange, canSee, canStrike, inBlast, isMeleeClass, chebyshev, classOf, reachableFor, visionRange } from './game.ts'
 import { dist, key, lineOfSight, samePos, terrain, terrainId } from './grid.ts'
 import type { Rng } from './rng.ts'
 import type { Intel, Observation, Order, Pos, Unit, UnitClass } from './types.ts'
@@ -178,7 +178,7 @@ function blastValue(ctx: Ctx, u: Unit, pos: Pos, e: Intel): number {
   const p = hitChance(map, rules, cls, pos, e.pos).chance / 100
   let v = 0
   for (const o of ctx.known) {
-    if (o.age > 0 || o.unitId === e.unitId || Math.abs(o.pos.x - e.pos.x) + Math.abs(o.pos.y - e.pos.y) !== 1) continue
+    if (o.age > 0 || o.unitId === e.unitId || !inBlast(rules, e.pos, o.pos)) continue
     const oc = classOf(rules, o)
     v += Math.min(1, (p * baseDamage(rules, cls.atk, oc.def, cls.pen) * cls.blast) / (o.hp ?? oc.hp)) * 3 * 0.6
   }
@@ -270,7 +270,7 @@ function bestOrder(ctx: Ctx, u: Unit): Order {
     // 被弾リスク（遮蔽込み）。防護兵の隣なら軽減
     let threat = threatAt(ctx, cls, u.hp, pos)
     // 爆風持ちの敵がいれば、上下左右に味方がいるマスは巻き込まれやすい
-    const near4 = [...ctx.planned].filter(([id, ap]) => id !== u.id && Math.abs(ap.x - pos.x) + Math.abs(ap.y - pos.y) === 1).length
+    const near4 = [...ctx.planned].filter(([id, ap]) => id !== u.id && inBlast(rules, pos, ap)).length
     if (near4) for (const e of known) {
       const ec = classOf(rules, e)
       if (!ec.blast || e.age > 2 || dist(pos, e.pos) > ec.move + ec.range + 1) continue
