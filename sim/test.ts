@@ -256,7 +256,7 @@ const tests: Record<string, () => void> = {
   },
   'レーダー塔の上で手を終えると、次の手は敵全員が見える'() {
     const m: MapDef = { ...mapOf(['.......', '.#.....', '.......', '...#...', '.......', '.....#.', '.......'], [{ x: 0, y: 6 }], [{ x: 6, y: 0 }]), radars: [{ x: 1, y: 1 }, { x: 5, y: 5 }] }
-    const g = createGame(m, rules1, [['gunner'], ['sniper']])
+    const g = createGame(m, mergeRules(rules1, { radar: true }), [['gunner'], ['sniper']])
     unit(g, '0-0').pos = { x: 1, y: 2 }
     unit(g, '1-0').pos = { x: 6, y: 6 }
     resolveTurn(g, [stay(g, 0), stay(g, 1)], createRng(1))
