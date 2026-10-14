@@ -273,7 +273,7 @@ class Battle {
     for (const u of s.units) {
       if (u.side !== 0 || (!u.alive && !hpOverride?.has(u.id))) continue
       const c = classOf(rules, u)
-      specs.push({ id: u.id, side: 0, cls: u.cls, letter: c.short, hp: hpOverride?.get(u.id) ?? u.hp, maxHp: c.hp, pos: u.pos, selected: u.id === this.selected })
+      specs.push({ id: u.id, side: 0, cls: u.cls, letter: c.short, kanji: c.kanji, hp: hpOverride?.get(u.id) ?? u.hp, maxHp: c.hp, pos: u.pos, selected: u.id === this.selected })
     }
     // 敵は intel（自軍から分かっている情報）だけから描く
     const selTarget = this.selected ? this.orders.get(this.selected)?.target : undefined
@@ -287,6 +287,7 @@ class Battle {
         side: 1,
         cls: i.cls,
         letter: c.short,
+        kanji: c.kanji,
         targeted: !hpOverride && i.unitId === selTarget,
         hp: i.visible ? i.hp : null,
         maxHp: c.hp,
@@ -441,7 +442,7 @@ class Battle {
       const u = unitOf(id)
       const c = classOf(rules, u)
       const cur = disp.get(id)
-      disp.set(id, { id, side: 1, cls: u.cls, letter: c.short, hp: cur?.hp ?? null, maxHp: c.hp, pos: cur?.pos ?? pos, ghost: false })
+      disp.set(id, { id, side: 1, cls: u.cls, letter: c.short, kanji: c.kanji, hp: cur?.hp ?? null, maxHp: c.hp, pos: cur?.pos ?? pos, ghost: false })
     }
 
     // ① 移動：味方 → 見えた敵 の順に1体ずつ。行き先に別の駒がまだいるときは、そちらを先に動かす（駒を重ねない）。
@@ -501,7 +502,7 @@ class Battle {
         const u = unitOf(a.id)
         const c = classOf(rules, u)
         const cur = disp.get(a.id)
-        disp.set(a.id, { id: a.id, side: 1, cls: u.cls, letter: c.short, hp: cur?.ghost ? (this.shownIntel[a.id]?.hp ?? null) : (cur?.hp ?? null), maxHp: c.hp, pos: a.path[0], ghost: false, marked: cur?.marked })
+        disp.set(a.id, { id: a.id, side: 1, cls: u.cls, letter: c.short, kanji: c.kanji, hp: cur?.ghost ? (this.shownIntel[a.id]?.hp ?? null) : (cur?.hp ?? null), maxHp: c.hp, pos: a.path[0], ghost: false, marked: cur?.marked })
       }
       show()
       for (const a of batch) if (a.fadeIn) this.board.setPieceOpacity(a.id, 0)
@@ -557,7 +558,7 @@ class Battle {
           if (!isMine(guarded) && !disp.get(guarded)) reveal(guarded, unitOf(guarded).pos)
           const g = disp.get(guarded)
           if (g) {
-            this.board.popup(g.pos, '庇う', '#2f6fec', 900)
+            this.board.popup(g.pos, '庇う', '#37c3ff', 900)
             g.hp = Math.max(0, (g.hp ?? unitOf(guarded).hp) - e.shots.filter((x) => x.guardedBy).reduce((a, x) => a + x.damage, 0))
           }
         }
@@ -581,20 +582,20 @@ class Battle {
         this.caption(`${this.name(e.unitId)} 観測：${e.targets.map((t) => this.name(t)).join('・')} をマーク`)
         for (const t of e.targets) {
           if (!disp.get(t)) reveal(t, unitOf(t).pos)
-          this.board.popup(disp.get(t)?.pos ?? unitOf(t).pos, 'MARK', '#1f9d55', 900)
+          this.board.popup(disp.get(t)?.pos ?? unitOf(t).pos, 'MARK', '#3ddc84', 900)
         }
         show()
         await this.board.wait(500)
       } else if (e.type === 'suppress') {
         const t = disp.get(e.targetId)
-        if (t) await this.board.popup(t.pos, '制圧', '#c07a00', 700)
+        if (t) await this.board.popup(t.pos, '制圧', '#ffc247', 700)
       } else if (e.type === 'heal' && isMine(e.unitId)) {
         this.caption(`${this.name(e.unitId)} 応急手当`)
         for (const t of e.targets) {
           const d = disp.get(t.id)
           if (d) {
             d.hp = (d.hp ?? 0) + t.amount
-            this.board.popup(d.pos, `+${t.amount}`, '#1f9d55', 900)
+            this.board.popup(d.pos, `+${t.amount}`, '#3ddc84', 900)
           }
         }
         show()
@@ -603,7 +604,7 @@ class Battle {
         const u = unitOf(e.unitId)
         this.caption(`${this.name(e.unitId)} 撃てず：${BLOCK_LABEL[e.reason]}`)
         await this.board.focus([disp.get(e.unitId)?.pos ?? u.pos], 350)
-        await this.board.popup(disp.get(e.unitId)?.pos ?? u.pos, `× ${BLOCK_LABEL[e.reason]}`, '#c07a00', 800)
+        await this.board.popup(disp.get(e.unitId)?.pos ?? u.pos, `× ${BLOCK_LABEL[e.reason]}`, '#ffc247', 800)
       } else if (e.type === 'bailout') {
         this.caption(`💥 ${this.name(e.unitId)} 撃破`)
         const killer = [...events].reverse().find((x) => x.type === 'attack' && x.hitId === e.unitId)

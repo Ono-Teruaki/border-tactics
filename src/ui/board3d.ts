@@ -1,4 +1,8 @@
 import * as THREE from 'three'
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js'
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js'
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js'
+import { OutputPass } from 'three/addons/postprocessing/OutputPass.js'
 import { key, terrainId } from '../engine/grid.ts'
 import type { MapDef, Pos } from '../engine/types.ts'
 
@@ -9,6 +13,8 @@ export interface PieceSpec {
   side: 0 | 1
   cls: string
   letter: string
+  /** クラスの漢字（駒に浮かべる字） */
+  kanji: string
   hp: number | null
   maxHp: number
   pos: Pos
@@ -32,38 +38,23 @@ export interface PlanSpec {
 }
 
 const BUILDING_H = 0.9
+/** 作戦卓ホログラム（ホロ＋）の配色 */
 const C = {
-  bg: 0xeef1f5,
-  me: 0x2f6fec,
-  en: 0xe0443e,
-  white: 0xf6f6f4,
-  black: 0x2a2e35,
-  warn: 0xf0a020,
+  me: 0x37c3ff,
+  en: 0xff5b47,
+  warn: 0xffc247,
+  edge: 0x7fe3ff,
+  ink: '#0a1424',
 }
+const hex = (c: number) => '#' + c.toString(16).padStart(6, '0')
+/** 駒の字を浮かべる高さ */
+const TAG_Y = 0.66
 const VIEWS = [
+  { name: '標準', azimuth: 0.22, elevation: 0.92 },
   { name: '斜め', azimuth: Math.PI / 4, elevation: 0.9 },
   { name: '正面', azimuth: 0, elevation: 0.85 },
   { name: '真上', azimuth: 0, elevation: 1.5 },
 ]
-
-/** クラスごとのシルエット（LatheGeometry の [半径, 高さ]） */
-const BASE: [number, number][] = [
-  [0, 0],
-  [0.34, 0],
-  [0.34, 0.05],
-  [0.3, 0.08],
-  [0.24, 0.11],
-  [0.19, 0.16],
-]
-const PROFILES: Record<string, [number, number][]> = {
-  attacker: [...BASE, [0.13, 0.42], [0.18, 0.5], [0.18, 0.55], [0.09, 0.58], [0.07, 0.86], [0.035, 0.98], [0, 1.02]],
-  gunner: [...BASE, [0.12, 0.42], [0.2, 0.47], [0.2, 0.51], [0.1, 0.54], [0.15, 0.58], [0.17, 0.66], [0.15, 0.74], [0.09, 0.79], [0, 0.81]],
-  sniper: [...BASE, [0.09, 0.4], [0.07, 0.74], [0.17, 0.78], [0.17, 0.82], [0.05, 0.85], [0.035, 1.08], [0, 1.1]],
-  medic: [...BASE, [0.15, 0.36], [0.17, 0.5], [0.24, 0.54], [0.24, 0.6], [0.15, 0.63], [0.15, 0.7], [0.09, 0.74], [0, 0.75]],
-  guardian: [...BASE, [0.24, 0.2], [0.27, 0.32], [0.27, 0.62], [0.22, 0.66], [0.13, 0.68], [0.14, 0.76], [0, 0.78]],
-  scout: [...BASE, [0.17, 0.3], [0.21, 0.4], [0.2, 0.48], [0.13, 0.54], [0.03, 0.56], [0.03, 0.74], [0.07, 0.77], [0.04, 0.81], [0, 0.82]],
-}
-const pieceHeight = (cls: string) => Math.max(...(PROFILES[cls] ?? PROFILES.gunner).map((p) => p[1]))
 
 interface Tween {
   start: number
@@ -87,7 +78,9 @@ export class Board3D {
   private pieces = new Map<string, THREE.Group>()
   private planGroup = new THREE.Group()
   private fxGroup = new THREE.Group()
-  private geoCache = new Map<string, THREE.BufferGeometry>()
+  private visionEdges = new THREE.Group()
+  private composer: EffectComposer
+  private bloom: UnrealBloomPass
   private tweens: Tween[] = []
   private looping = false
   private viewIndex = 0
@@ -111,11 +104,17 @@ export class Board3D {
     this.canvas = this.renderer.domElement
     this.canvas.style.touchAction = 'none'
     container.append(this.canvas)
-    this.scene.background = new THREE.Color(C.bg)
+    this.scene.background = gradientTexture('#0d1b2e', '#1a2d47')
     this.camera = new THREE.PerspectiveCamera(32, 1, 0.1, 200)
+    // 字や光の筋をにじませる
+    this.composer = new EffectComposer(this.renderer)
+    this.composer.addPass(new RenderPass(this.scene, this.camera))
+    this.bloom = new UnrealBloomPass(new THREE.Vector2(256, 256), 0.75, 0.4, 0.4)
+    this.composer.addPass(this.bloom)
+    this.composer.addPass(new OutputPass())
 
-    this.scene.add(new THREE.HemisphereLight(0xffffff, 0xc8ced8, 2.0))
-    const sun = new THREE.DirectionalLight(0xffffff, 2.2)
+    this.scene.add(new THREE.HemisphereLight(0xbfe6ff, 0x0b1626, 1.1))
+    const sun = new THREE.DirectionalLight(0xe6f4ff, 2.0)
     sun.position.set(-5, 14, 7)
     sun.castShadow = true
     sun.shadow.mapSize.set(2048, 2048)
@@ -124,7 +123,7 @@ export class Board3D {
     this.scene.add(sun)
 
     this.buildBoard()
-    this.scene.add(this.planGroup, this.fxGroup)
+    this.scene.add(this.visionEdges, this.planGroup, this.fxGroup)
 
     this.resizeObs = new ResizeObserver(() => this.resize())
     this.resizeObs.observe(container)
@@ -154,24 +153,30 @@ export class Board3D {
   // ---------- 盤 ----------
   private buildBoard() {
     const n = this.map.width
-    const top = new THREE.MeshStandardMaterial({ map: boardTexture(n), roughness: 0.45 })
-    const side = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.5 })
-    const board = new THREE.Mesh(new THREE.BoxGeometry(n + 0.4, 0.3, n + 0.4), [side, side, top, side, side, side])
-    board.position.y = -0.15
-    board.receiveShadow = true
-    this.scene.add(board)
-    const plinth = new THREE.Mesh(new THREE.BoxGeometry(n + 0.1, 0.25, n + 0.1), new THREE.MeshStandardMaterial({ color: 0xd5dae2, roughness: 0.6 }))
-    plinth.position.y = -0.42
-    this.scene.add(plinth)
+    // 卓：厚みのある台＋光る縁
+    const tableGeo = new THREE.BoxGeometry(n + 1.0, 0.35, n + 1.0)
+    const table = new THREE.Mesh(tableGeo, new THREE.MeshStandardMaterial({ color: 0x14263d, roughness: 0.6, metalness: 0.2 }))
+    table.position.y = -0.18
+    table.receiveShadow = true
+    this.scene.add(table)
+    const rim = new THREE.LineSegments(new THREE.EdgesGeometry(tableGeo), new THREE.LineBasicMaterial({ color: 0x3fa9d6 }))
+    rim.position.y = -0.18
+    this.scene.add(rim)
+    const surface = new THREE.Mesh(new THREE.PlaneGeometry(n, n), new THREE.MeshStandardMaterial({ map: boardTexture(this.map), roughness: 0.55, metalness: 0.1 }))
+    surface.rotation.x = -Math.PI / 2
+    surface.position.y = 0.001
+    surface.receiveShadow = true
+    this.scene.add(surface)
 
-    const glass = new THREE.MeshStandardMaterial({ map: buildingTexture(), roughness: 0.3 })
-    const roof = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.5 })
-    const edgeMat = new THREE.LineBasicMaterial({ color: 0xb8c0cc })
+    // ビル：すりガラスの箱＋光る輪郭
+    const glass = new THREE.MeshStandardMaterial({ color: 0x2a5b85, roughness: 0.2, metalness: 0.3, transparent: true, opacity: 0.8, emissive: 0x0c2a44 })
+    const roof = new THREE.MeshStandardMaterial({ color: 0x3d7bab, roughness: 0.4 })
+    const edgeMat = new THREE.LineBasicMaterial({ color: 0x8fe6ff })
     for (let y = 0; y < n; y++) {
       for (let x = 0; x < n; x++) {
         const p = { x, y }
         if (terrainId(this.map, p) === 'building') {
-          const b = new THREE.Mesh(new THREE.BoxGeometry(0.9, BUILDING_H, 0.9), [glass, glass, roof, roof, glass, glass])
+          const b = new THREE.Mesh(new THREE.BoxGeometry(0.88, BUILDING_H, 0.88), [glass, glass, roof, glass, glass, glass])
           b.position.copy(this.world({ x, y })).setY(BUILDING_H / 2)
           b.castShadow = true
           b.receiveShadow = true
@@ -200,74 +205,94 @@ export class Board3D {
       const mat = ov.material as THREE.MeshBasicMaterial
       let color = 0x000000
       let opacity = 0
-      if (m?.has('fog')) (color = 0x4a5466), (opacity = 0.3)
-      if (m?.has('range')) (color = C.en), (opacity = 0.14)
-      if (m?.has('reach')) (color = C.me), (opacity = 0.28)
-      if (m?.has('reachRange')) (color = 0x7a5cff), (opacity = 0.3)
+      if (m?.has('fog')) (color = 0x02060c), (opacity = 0.55)
+      if (m?.has('range')) (color = C.en), (opacity = 0.2)
+      if (m?.has('reach')) (color = C.me), (opacity = 0.3)
+      if (m?.has('reachRange')) (color = 0x9a7cff), (opacity = 0.35)
       if (m?.has('dest')) (color = C.me), (opacity = 0.6)
       mat.color.setHex(color)
       mat.opacity = opacity
     }
+    this.drawVisionEdges(marks)
     this.requestRender()
   }
 
-  // ---------- 駒 ----------
-  private geometry(cls: string) {
-    let g = this.geoCache.get(cls)
-    if (!g) {
-      const pts = (PROFILES[cls] ?? PROFILES.gunner).map(([r, y]) => new THREE.Vector2(r, y))
-      g = new THREE.LatheGeometry(pts, 40)
-      g.computeVertexNormals()
-      this.geoCache.set(cls, g)
+  /** 視界の境目（見えている地上マスと霧のマスの間）に光る線を引く */
+  private drawVisionEdges(marks: Map<string, Set<TileMark>>) {
+    this.visionEdges.clear()
+    const fog = (p: Pos) => !!marks.get(key(p))?.has('fog')
+    if (![...marks.values()].some((m) => m.has('fog'))) return
+    const mat = new THREE.MeshBasicMaterial({ color: C.edge, transparent: true, opacity: 0.9 })
+    const n = this.map.width
+    for (let y = 0; y < n; y++) {
+      for (let x = 0; x < n; x++) {
+        const p = { x, y }
+        if (fog(p) || terrainId(this.map, p) === 'building') continue
+        for (const [dx, dy] of [
+          [1, 0],
+          [-1, 0],
+          [0, 1],
+          [0, -1],
+        ]) {
+          const q = { x: x + dx, y: y + dy }
+          if (q.x < 0 || q.y < 0 || q.x >= n || q.y >= n || !fog(q)) continue
+          const seg = new THREE.Mesh(new THREE.PlaneGeometry(dx ? 0.05 : 1, dx ? 1 : 0.05), mat)
+          seg.rotation.x = -Math.PI / 2
+          seg.position.set(x - this.half + dx * 0.5, 0.014, y - this.half + dy * 0.5)
+          this.visionEdges.add(seg)
+        }
+      }
     }
-    return g
   }
 
+  // ---------- 駒 ----------
+  /** 半透明の六角の台座＋光の柱＋浮かぶ光る字（クラスの漢字） */
   private makePiece(spec: PieceSpec): THREE.Group {
     const g = new THREE.Group()
+    const col = spec.side === 0 ? C.me : C.en
     const body = new THREE.Mesh(
-      this.geometry(spec.cls),
-      new THREE.MeshStandardMaterial({ color: spec.side === 0 ? C.white : C.black, roughness: spec.side === 0 ? 0.35 : 0.45, transparent: true }),
+      new THREE.CylinderGeometry(0.34, 0.38, 0.08, 6),
+      new THREE.MeshStandardMaterial({ color: col, emissive: col, emissiveIntensity: 0.35, transparent: true, opacity: 0.3, depthWrite: false }),
     )
+    body.position.y = 0.04
     body.castShadow = true
-    const band = new THREE.Mesh(new THREE.TorusGeometry(0.3, 0.025, 8, 40), new THREE.MeshBasicMaterial({ color: spec.side === 0 ? C.me : C.en, transparent: true }))
-    band.rotation.x = Math.PI / 2
-    band.position.y = 0.07
-    const ring = new THREE.Mesh(new THREE.RingGeometry(0.4, 0.47, 48), new THREE.MeshBasicMaterial({ color: C.me, side: THREE.DoubleSide }))
+    const rim = new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.CylinderGeometry(0.38, 0.38, 0.001, 6)), new THREE.LineBasicMaterial({ color: col, transparent: true }))
+    rim.position.y = 0.08
+    const band = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, 0.5, 6), new THREE.MeshBasicMaterial({ color: col, transparent: true }))
+    band.position.y = 0.33
+    const ring = new THREE.Mesh(new THREE.RingGeometry(0.42, 0.49, 6, 1, Math.PI / 6), new THREE.MeshBasicMaterial({ color: 0xffffff, side: THREE.DoubleSide }))
     ring.rotation.x = -Math.PI / 2
     ring.position.y = 0.012
     ring.name = 'ring'
-    const reticle = new THREE.Mesh(new THREE.RingGeometry(0.36, 0.47, 4, 1, Math.PI / 4), new THREE.MeshBasicMaterial({ color: C.en, side: THREE.DoubleSide }))
+    const reticle = new THREE.Mesh(new THREE.RingGeometry(0.4, 0.48, 4, 1, Math.PI / 4), new THREE.MeshBasicMaterial({ color: C.warn, side: THREE.DoubleSide }))
     reticle.rotation.x = -Math.PI / 2
     reticle.position.y = 0.014
     reticle.name = 'reticle'
     const tag = new THREE.Sprite(new THREE.SpriteMaterial({ transparent: true, depthTest: false }))
-    tag.scale.set(0.82, 0.32, 1)
-    tag.position.y = pieceHeight(spec.cls) + 0.22
+    tag.scale.set(1.0, 0.5, 1)
+    tag.position.y = TAG_Y
     tag.renderOrder = 5
-    g.add(body, band, ring, reticle, tag)
-    g.userData = { id: spec.id, body, band, tag, tagKey: '' }
+    g.add(body, rim, band, ring, reticle, tag)
+    g.userData = { id: spec.id, body, band, rim, tag, tagKey: '', color: col }
     this.scene.add(g)
     this.pickables.push(body)
     return g
   }
 
   private applySpec(g: THREE.Group, spec: PieceSpec) {
-    const { body, band, tag } = g.userData as { body: THREE.Mesh; band: THREE.Mesh; tag: THREE.Sprite }
-    const op = spec.ghost ? 0.3 : 1
-    ;(body.material as THREE.MeshStandardMaterial).opacity = op
-    ;(band.material as THREE.MeshBasicMaterial).opacity = op
-    body.castShadow = !spec.ghost
+    const { band, tag } = g.userData as { band: THREE.Mesh; tag: THREE.Sprite }
+    this.setOpacity(g, spec.ghost ? 0.35 : 1)
+    band.visible = !spec.ghost
     g.getObjectByName('ring')!.visible = !!spec.selected
     g.getObjectByName('reticle')!.visible = !!spec.targeted
-    const tk = `${spec.letter}|${spec.side}|${spec.hp}|${spec.maxHp}|${spec.label}|${spec.ghost}|${spec.marked}`
+    const tk = `${spec.letter}|${spec.cls}|${spec.side}|${spec.hp}|${spec.maxHp}|${spec.label}|${spec.ghost}|${spec.marked}`
     if (g.userData.tagKey !== tk) {
       tag.material.map?.dispose()
       tag.material.map = tagTexture(spec)
       tag.material.needsUpdate = true
       g.userData.tagKey = tk
     }
-    body.userData.tile = spec.pos
+    ;(g.userData.body as THREE.Mesh).userData.tile = spec.pos
   }
 
   /** 駒の表示を同期する。animate なら移動をトゥイーン */
@@ -312,8 +337,11 @@ export class Board3D {
     for (const p of plans) {
       if (p.from.x !== p.to.x || p.from.y !== p.to.y) {
         this.planGroup.add(flatArrow(this.world(p.from, 0.03), this.world(p.to, 0.03), p.warn ? C.warn : C.me))
-        const ghost = new THREE.Mesh(this.geometry(p.cls), new THREE.MeshStandardMaterial({ color: C.white, transparent: true, opacity: 0.45 }))
-        ghost.position.copy(this.world(p.to))
+        const ghost = new THREE.LineSegments(
+          new THREE.EdgesGeometry(new THREE.CylinderGeometry(0.38, 0.38, 0.08, 6)),
+          new THREE.LineBasicMaterial({ color: C.me, transparent: true, opacity: 0.7 }),
+        )
+        ghost.position.copy(this.world(p.to, 0.04))
         this.planGroup.add(ghost)
       }
       if (p.target) {
@@ -355,9 +383,10 @@ export class Board3D {
   }
 
   private setOpacity(g: THREE.Group, op: number) {
-    const { body, band, tag } = g.userData as { body: THREE.Mesh; band: THREE.Mesh; tag: THREE.Sprite }
-    ;(body.material as THREE.MeshStandardMaterial).opacity = op
-    ;(band.material as THREE.MeshBasicMaterial).opacity = op
+    const { body, band, rim, tag } = g.userData as { body: THREE.Mesh; band: THREE.Mesh; rim: THREE.LineSegments; tag: THREE.Sprite }
+    ;(body.material as THREE.MeshStandardMaterial).opacity = 0.3 * op
+    ;(band.material as THREE.MeshBasicMaterial).opacity = 0.85 * op
+    ;(rim.material as THREE.LineBasicMaterial).opacity = op
     tag.material.opacity = op
     body.castShadow = op > 0.5
     this.requestRender()
@@ -405,7 +434,7 @@ export class Board3D {
   /** 干渉した地点の衝撃 */
   clash(at: Pos) {
     this.burst(at, 0xf0a020, 0.35)
-    this.popup(at, '干渉!', '#c07a00', 900)
+    this.popup(at, '干渉!', '#ffc247', 900)
   }
 
   /** 指定したマス群が収まるようにカメラを寄せる */
@@ -436,7 +465,7 @@ export class Board3D {
 
   /** 弾ごとに発射して命中/ミスを表示。命中時はヒットストップ・閃光・揺れ */
   async volley(from: Pos, to: Pos, side: 0 | 1, shots: { hit: boolean; damage: number }[], spotted: boolean, targetId?: string): Promise<void> {
-    if (spotted) this.popup(from, '索敵連携', '#1f9d55', 900)
+    if (spotted) this.popup(from, '索敵連携', '#3ddc84', 900)
     const color = side === 0 ? C.me : C.en
     for (let i = 0; i < shots.length; i++) {
       const s = shots[i]
@@ -455,11 +484,11 @@ export class Board3D {
           this.flash(targetId)
           this.knockback(targetId, from)
         }
-        this.popup(to, `-${s.damage}`, '#e0443e', 850, dx, 1.25)
+        this.popup(to, `-${s.damage}`, '#ff5b47', 850, dx, 1.25)
         // ヒットストップ：一瞬止めて揺らす
         await this.shake(shots.length > 1 ? 110 : 170, shots.length > 1 ? 0.05 : 0.09)
       } else {
-        this.popup(to, 'MISS', '#8a93a0', 700, dx)
+        this.popup(to, 'MISS', '#8aa4bf', 700, dx)
         await this.wait(shots.length > 1 ? 90 : 160)
       }
     }
@@ -523,9 +552,15 @@ export class Board3D {
     const g = this.pieces.get(id)
     if (!g) return
     const mat = (g.userData.body as THREE.Mesh).material as THREE.MeshStandardMaterial
+    const base = new THREE.Color(g.userData.color as number)
+    const hit = new THREE.Color(0xffffff)
     this.tween(260, (t) => {
-      mat.emissive.setRGB(1 - t, (1 - t) * 0.35, (1 - t) * 0.3)
-    }).then(() => mat.emissive.setRGB(0, 0, 0))
+      mat.emissive.copy(hit).lerp(base, t)
+      mat.emissiveIntensity = 2.5 * (1 - t) + 0.35 * t
+    }).then(() => {
+      mat.emissive.copy(base)
+      mat.emissiveIntensity = 0.35
+    })
   }
 
   /** 被弾の反動で少しのけぞる */
@@ -602,7 +637,7 @@ export class Board3D {
     pillar.position.copy(base).setY(base.y + h / 2)
     this.fxGroup.add(pillar)
     this.burst(at, side === 0 ? C.me : C.en, 0.6)
-    this.popup(at, '撃破', side === 0 ? '#2f6fec' : '#e0443e', 1200, 0, 1.3)
+    this.popup(at, '撃破', side === 0 ? '#37c3ff' : '#ff5b47', 1200, 0, 1.3)
     await this.tween(900, (t) => {
       ;(pillar.material as THREE.MeshBasicMaterial).opacity = 0.6 * (1 - t)
       pillar.scale.x = pillar.scale.z = 1 - t * 0.7
@@ -641,10 +676,10 @@ export class Board3D {
         this.burst(to, color, isKill ? 0.7 : 0.45)
         this.flash(targetId)
         if (!isKill) this.knockback(targetId, from)
-        this.popup(to, `-${s.damage}`, '#e0443e', 850, 0, isKill ? 1.6 : 1.25)
+        this.popup(to, `-${s.damage}`, '#ff5b47', 850, 0, isKill ? 1.6 : 1.25)
         await this.shake(isKill ? 260 : 170, isKill ? 0.12 : 0.09)
       } else {
-        this.popup(to, 'MISS', '#8a93a0', 700)
+        this.popup(to, 'MISS', '#8aa4bf', 700)
         await this.wait(160)
       }
       this.timeScale = 1
@@ -696,7 +731,7 @@ export class Board3D {
     if (before.length) {
       await this.focus([from, to], 380)
       await this.volley(from, to, side, before, spotted, targetId)
-    } else if (spotted) this.popup(from, '索敵連携', '#1f9d55', 900)
+    } else if (spotted) this.popup(from, '索敵連携', '#3ddc84', 900)
     // 撃ち手のアップ
     await this.focus([from], 380, 3.4)
     this.burst(from, 0xffffff, 0.2)
@@ -713,10 +748,10 @@ export class Board3D {
     const s = shots[lastHit]
     this.burst(to, color, 0.75)
     this.flash(targetId)
-    this.popup(to, `-${s.damage}`, '#e0443e', 1000, 0, 1.7)
+    this.popup(to, `-${s.damage}`, '#ff5b47', 1000, 0, 1.7)
     await this.shake(260, 0.12)
     this.timeScale = 1
-    for (const rest of shots.slice(lastHit + 1)) this.popup(to, rest.hit ? `-${rest.damage}` : 'MISS', '#8a93a0', 600)
+    for (const rest of shots.slice(lastHit + 1)) this.popup(to, rest.hit ? `-${rest.damage}` : 'MISS', '#8aa4bf', 600)
     await this.wait(150)
   }
 
@@ -793,6 +828,8 @@ export class Board3D {
     const h = this.container.clientHeight
     if (!w || !h) return
     this.renderer.setSize(w, h, false)
+    this.composer.setSize(w, h)
+    this.bloom.resolution.set(w / 2, h / 2)
     this.canvas.style.width = `${w}px`
     this.canvas.style.height = `${h}px`
     this.camera.aspect = w / h
@@ -878,7 +915,7 @@ export class Board3D {
         if (t >= 1) tw.resolve()
         return t < 1
       })
-      this.renderer.render(this.scene, this.camera)
+      this.composer.render()
       if (this.tweens.length) requestAnimationFrame(step)
       else this.looping = false
     }
@@ -891,7 +928,7 @@ export class Board3D {
     this.renderQueued = true
     requestAnimationFrame(() => {
       this.renderQueued = false
-      this.renderer.render(this.scene, this.camera)
+      this.composer.render()
     })
   }
 }
@@ -931,100 +968,103 @@ function canvasTex(c: HTMLCanvasElement) {
   return t
 }
 
-function roundRect(g: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
-  g.beginPath()
-  g.moveTo(x + r, y)
-  g.arcTo(x + w, y, x + w, y + h, r)
-  g.arcTo(x + w, y + h, x, y + h, r)
-  g.arcTo(x, y + h, x, y, r)
-  g.arcTo(x, y, x + w, y, r)
-  g.closePath()
-}
 
 /** 駒の上に浮かぶ小さなタグ（クラス記号 + HPバー / 何手前） */
+/** 駒の字：クラスの漢字を陣営色で光らせ、右下にHP。見失った敵は「? 2手前」 */
 function tagTexture(spec: PieceSpec) {
-  const W = 160
-  const H = 62
+  const W = 256
+  const H = 128
   const c = document.createElement('canvas')
   c.width = W
   c.height = H
   const g = c.getContext('2d')!
-  const accent = spec.side === 0 ? '#2f6fec' : '#e0443e'
-  g.globalAlpha = spec.ghost ? 0.75 : 1
-  roundRect(g, 3, 3, W - 6, H - 6, 18)
-  g.fillStyle = spec.side === 0 ? '#ffffff' : '#2a2e35'
-  g.fill()
-  g.lineWidth = 4
-  g.strokeStyle = accent
-  g.stroke()
-  g.fillStyle = spec.side === 0 ? '#1d2330' : '#ffffff'
-  g.font = '800 32px system-ui, sans-serif'
-  g.textBaseline = 'middle'
+  const col = hex(spec.side === 0 ? C.me : C.en)
   g.textAlign = 'center'
-  g.fillText(spec.letter, 30, H / 2 + 1)
+  g.textBaseline = 'middle'
+  if (spec.label) {
+    g.font = '800 30px system-ui, sans-serif'
+    g.lineWidth = 8
+    g.strokeStyle = C.ink
+    g.strokeText(`? ${spec.label}`, W / 2, 26)
+    g.fillStyle = col
+    g.fillText(`? ${spec.label}`, W / 2, 26)
+  }
+  g.font = '900 72px "Hiragino Sans", system-ui, sans-serif'
+  g.lineWidth = 12
+  g.strokeStyle = C.ink
+  g.strokeText(spec.kanji, W / 2, 78)
+  g.shadowColor = col
+  g.shadowBlur = spec.ghost ? 0 : 16
+  g.fillStyle = col
+  g.fillText(spec.kanji, W / 2, 78)
+  g.shadowBlur = 0
+  if (!spec.ghost) {
+    const r = spec.hp === null ? 1 : Math.max(0, Math.min(1, spec.hp / spec.maxHp))
+    g.font = '800 30px system-ui, sans-serif'
+    g.textAlign = 'left'
+    g.lineWidth = 7
+    g.strokeStyle = C.ink
+    const t = spec.hp === null ? '?' : String(spec.hp)
+    g.strokeText(t, W / 2 + 42, 96)
+    g.fillStyle = r > 0.5 ? '#e3f4ff' : r > 0.25 ? '#ffc247' : '#ff7a6a'
+    g.fillText(t, W / 2 + 42, 96)
+  }
   if (spec.marked) {
     g.beginPath()
-    g.arc(W - 10, 10, 8, 0, Math.PI * 2)
-    g.fillStyle = '#1f9d55'
+    g.arc(W / 2 - 52, 52, 9, 0, Math.PI * 2)
+    g.fillStyle = '#3ddc84'
     g.fill()
-    g.fillStyle = spec.side === 0 ? '#1d2330' : '#ffffff'
-  }
-  if (spec.label) {
-    g.font = '700 22px system-ui, sans-serif'
-    g.fillText(spec.label, 100, H / 2 + 1)
-  } else {
-    const x0 = 54
-    const bw = 62
-    roundRect(g, x0, H / 2 - 8, bw, 16, 6)
-    g.fillStyle = spec.side === 0 ? '#dfe3ea' : '#4a505a'
-    g.fill()
-    if (spec.hp !== null && spec.hp > 0) {
-      const r = Math.max(0, Math.min(1, spec.hp / spec.maxHp))
-      roundRect(g, x0, H / 2 - 8, Math.max(12, bw * r), 16, 6)
-      g.fillStyle = r > 0.5 ? accent : r > 0.25 ? '#f0a020' : '#e0443e'
-      g.fill()
-    }
-    g.fillStyle = spec.side === 0 ? '#1d2330' : '#ffffff'
-    g.font = '800 22px system-ui, sans-serif'
-    g.textAlign = 'right'
-    g.fillText(spec.hp === null ? '?' : String(spec.hp), W - 12, H / 2 + 1)
   }
   return canvasTex(c)
 }
 
-function boardTexture(n: number) {
-  const px = 96
-  const pad = 0.2
-  const size = Math.round((n + pad * 2) * px)
+/** 盤面：マス目を焼き込む */
+function boardTexture(map: MapDef) {
+  const n = map.width
+  const S = 96
   const c = document.createElement('canvas')
-  c.width = c.height = size
+  c.width = c.height = n * S
   const g = c.getContext('2d')!
-  g.fillStyle = '#ffffff'
-  g.fillRect(0, 0, size, size)
-  const o = pad * px
+  g.fillStyle = '#183a58'
+  g.fillRect(0, 0, n * S, n * S)
   for (let y = 0; y < n; y++) {
     for (let x = 0; x < n; x++) {
-      g.fillStyle = (x + y) % 2 === 0 ? '#f7f8fa' : '#e1e5ec'
-      g.fillRect(o + x * px, o + y * px, px, px)
+      const gr = g.createRadialGradient(x * S + S / 2, y * S + S / 2, 6, x * S + S / 2, y * S + S / 2, S * 0.7)
+      gr.addColorStop(0, 'rgba(90,200,255,0.16)')
+      gr.addColorStop(1, 'rgba(90,200,255,0)')
+      g.fillStyle = gr
+      g.fillRect(x * S, y * S, S, S)
+      g.strokeStyle = 'rgba(110,210,255,0.32)'
+      g.lineWidth = 3
+      g.strokeRect(x * S + 1.5, y * S + 1.5, S - 3, S - 3)
     }
   }
-  g.strokeStyle = '#c3cad4'
-  g.lineWidth = 3
-  g.strokeRect(o, o, n * px, n * px)
+  // 出撃区画
+  for (const [side, col] of [
+    [0, 'rgba(55,195,255,0.6)'],
+    [1, 'rgba(255,91,71,0.6)'],
+  ] as const) {
+    const xs = map.spawns[side].map((p) => p.x)
+    const ys = map.spawns[side].map((p) => p.y)
+    g.strokeStyle = col
+    g.lineWidth = 4
+    g.setLineDash([12, 9])
+    g.strokeRect(Math.min(...xs) * S + 8, Math.min(...ys) * S + 8, (Math.max(...xs) - Math.min(...xs) + 1) * S - 16, (Math.max(...ys) - Math.min(...ys) + 1) * S - 16)
+    g.setLineDash([])
+  }
   return canvasTex(c)
 }
 
-function buildingTexture() {
+function gradientTexture(top: string, bottom: string) {
   const c = document.createElement('canvas')
-  c.width = 64
-  c.height = 64
+  c.width = 4
+  c.height = 256
   const g = c.getContext('2d')!
-  g.fillStyle = '#ffffff'
-  g.fillRect(0, 0, 64, 64)
-  for (let y = 0; y < 4; y++) {
-    g.fillStyle = y % 2 ? '#cfe0f5' : '#dce9f8'
-    g.fillRect(6, 7 + y * 14, 52, 8)
-  }
+  const gr = g.createLinearGradient(0, 0, 0, 256)
+  gr.addColorStop(0, top)
+  gr.addColorStop(1, bottom)
+  g.fillStyle = gr
+  g.fillRect(0, 0, 4, 256)
   return canvasTex(c)
 }
 
@@ -1037,7 +1077,7 @@ function textSprite(text: string, color: string) {
   g.textAlign = 'center'
   g.textBaseline = 'middle'
   g.lineWidth = 12
-  g.strokeStyle = '#ffffff'
+  g.strokeStyle = C.ink
   g.strokeText(text, 160, 48)
   g.fillStyle = color
   g.fillText(text, 160, 48)
