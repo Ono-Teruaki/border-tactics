@@ -131,7 +131,13 @@ export function decideOrders(obs: Observation, rng: Rng, params: AiParams): Orde
     orders.set(u.id, next)
     aim(next)
   }
-  return obs.mine.map((u) => orders.get(u.id)!)
+  // 曲射（マス狙い）: 狙う敵が今いるマスに撃ち込む（敵がそのまま留まる前提）
+  return obs.mine.map((u) => {
+    const o = orders.get(u.id)!
+    if (!rules.skills.arcGround || !classOf(rules, u).arc || !o.target) return o
+    const e = ctx.known.find((k) => k.unitId === o.target)
+    return e ? { unitId: o.unitId, dest: o.dest, targetPos: { ...e.pos } } : { unitId: o.unitId, dest: o.dest }
+  })
 }
 
 interface Ctx {

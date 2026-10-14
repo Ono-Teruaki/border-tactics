@@ -156,6 +156,8 @@ export interface RulesConfig {
     jamSilence: boolean
     /** 爆風の形: plus = 上下左右、square = 周囲8マス */
     blastShape: 'plus' | 'square'
+    /** 曲射はマスを狙う（命中判定なし。着弾したマスと爆風の範囲にいる敵に当たる）。false で従来どおり敵を狙う */
+    arcGround: boolean
   }
   vision: {
     /** 屋上から見ても、ビルの裏側に張り付いた地上のマスは見えない */
@@ -203,6 +205,8 @@ export interface Order {
   unitId: string
   dest: Pos
   target?: string
+  /** 曲射（擲弾兵、skills.arcGround）: 狙うマス。弾はそのマスに落ち、敵が動いても追わない */
+  targetPos?: Pos
 }
 
 export type StrikeBlock = 'range' | 'blocked' | 'cover' | 'moved' | 'unseen' | 'gone' | 'down'
@@ -250,6 +254,8 @@ export type GameEvent =
     }
   /** 狙ったが撃てなかった */
   | { type: 'noshot'; unitId: string; targetId: string; reason: StrikeBlock }
+  /** 曲射の着弾（マスを狙う）。hits は直撃と爆風で当たった敵 */
+  | { type: 'bombard'; unitId: string; from: Pos; at: Pos; hits: { id: string; damage: number; hp: number; direct: boolean }[] }
   | { type: 'bailout'; unitId: string; at: Pos }
   | { type: 'mark'; unitId: string; targets: string[] }
   | { type: 'suppress'; unitId: string; targetId: string }

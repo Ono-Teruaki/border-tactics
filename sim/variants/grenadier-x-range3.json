@@ -1,0 +1,23 @@
+{
+  "ai": {
+    "cpu": {
+      "aggression": 0.976,
+      "caution": 2.543,
+      "scouting": 0.061,
+      "roofPref": 0.126,
+      "rush": 0.038,
+      "evade": 0.492,
+      "fireWeight": 1.367,
+      "cohesion": 0.503,
+      "focus": 0.718,
+      "jam": 0.567,
+      "blob": 0.696,
+      "killWeight": 0.362
+    }
+  },
+  "classes": {
+    "grenadier": {
+      "range": 3
+    }
+  }
+}
