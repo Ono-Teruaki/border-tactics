@@ -38,6 +38,8 @@ export interface AiParams {
   focus?: number
   /** ジャマー: 屋上に登って敵を妨害する価値の重み（既定 1） */
   jam?: number
+  /** 団塊: 全員が味方の隣にいたがる強さ（既定 0。支援役の cohesion とは別に、戦闘役にもかかる） */
+  blob?: number
   random?: boolean
 }
 
@@ -274,6 +276,11 @@ function bestOrder(ctx: Ctx, u: Unit): Order {
     // 支援役は味方の近くにいたい
     let cohesion = 0
     if (isSupport) for (const [id, ap] of ctx.planned) if (id !== u.id && chebyshev(ap, pos) <= 1) cohesion += ctx.p.cohesion ?? 0.4
+    if (p.blob) {
+      let near = 0
+      for (const [id, ap] of ctx.planned) if (id !== u.id && chebyshev(ap, pos) <= 1) near++
+      cohesion += p.blob * Math.min(3, near)
+    }
 
     const roof = t.visionBonus > 0 && (cls.range > 1 || isScout) ? 1 + visionRange(map, rules, u.cls, pos) * 0.05 : 0
     const action = Math.max(fire.value * (p.fireWeight ?? 1.5), sup)

@@ -1,5 +1,7 @@
 // CPU の重みの自動調整（交差エントロピー法）
 //   node sim/tune.ts [--gens 25] [--pop 16] [--games 48] [--variant sim/variants/x.json] [--out tuned-ai]
+//   対抗戦術の探索: --comp DAMJ --vs GSRD --opp-ai sim/variants/ai-tuned-v0101.json
+//     その編成で、決めた相手（編成と CPU を固定）に一番勝てる重みを探す
 //
 // 1世代ごとに、今の平均のまわりから重みの候補を pop 個つくり、
 // 「同じ編成どうし」（編成の差を消す）で標準 CPU と今の平均の両方と games 戦ずつ戦わせる。
@@ -29,12 +31,15 @@ const KNOBS: { key: keyof AiParams; label: string; lo: number; hi: number; def: 
   { key: 'cohesion', label: '支援役が味方に寄る', lo: 0, hi: 1.5, def: 0.4 },
   { key: 'focus', label: '集中砲火', lo: 0, hi: 1.5, def: 0 },
   { key: 'jam', label: '屋上に登って妨害', lo: 0, hi: 3, def: 1 },
+  { key: 'blob', label: '団塊（全員が味方の隣に）', lo: 0, hi: 2, def: 0 },
 ]
 
 interface Job {
   a: Partial<AiParams>
   b: Partial<AiParams>
   comp: string[]
+  /** 相手の編成（省略時は comp と同じ） */
+  vsComp?: string[]
   map: string
   seed: number
   /** a が side0 なら 0 */
@@ -49,7 +54,8 @@ if (!isMainThread) {
   const rules = mergeRules(DEFAULT_RULES, override)
   const out = jobs.map((j) => {
     const ais = (j.side === 0 ? [toParams(j.a), toParams(j.b)] : [toParams(j.b), toParams(j.a)]) as [AiParams, AiParams]
-    const r = playMatch(getMap(j.map), rules, [j.comp, j.comp], ais, j.seed)
+    const vs = j.vsComp ?? j.comp
+    const r = playMatch(getMap(j.map), rules, j.side === 0 ? [j.comp, vs] : [vs, j.comp], ais, j.seed)
     const w = r.winner.killCost
     return w === j.side ? 1 : w === null ? 0.5 : 0
   })
@@ -62,7 +68,13 @@ if (!isMainThread) {
   const GAMES = Number(arg('games', '48'))
   const variantPath = arg('variant', '')
   const variant: Variant = variantPath ? JSON.parse(readFileSync(variantPath, 'utf8')) : {}
-  const OUT = arg('out', variantPath ? `tuned-ai-${basename(variantPath, '.json')}` : 'tuned-ai')
+  const CODE: Record<string, string> = { A: 'attacker', G: 'gunner', S: 'sniper', R: 'scout', M: 'medic', J: 'jammer', D: 'guardian' }
+  const decode = (s: string) => s.split('').map((x) => CODE[x])
+  const COMP = arg('comp', '')
+  const VS = arg('vs', '')
+  const oppAiPath = arg('opp-ai', '')
+  const fixedOpp: Partial<AiParams> | null = oppAiPath ? JSON.parse(readFileSync(oppAiPath, 'utf8')).ai.cpu : COMP ? {} : null
+  const OUT = arg('out', COMP ? `counter-${COMP}-vs-${VS}` : variantPath ? `tuned-ai-${basename(variantPath, '.json')}` : 'tuned-ai')
   const rules = mergeRules(DEFAULT_RULES, (({ maps: _m, ai: _a, ...o }) => o)(variant))
   const ids = Object.keys(rules.classes)
   const legal = allComps(ids, rules.teamSize).filter((c) => ids.every((k) => c.filter((x) => x === k).length <= rules.skills.maxPerClass))
@@ -87,10 +99,17 @@ if (!isMainThread) {
 
   /** 対戦の組（同じ世代の候補は全員同じ組で戦う） */
   const matchups = (rng: ReturnType<typeof createRng>, n: number) =>
-    Array.from({ length: n }, (_, k) => ({ comp: legal[Math.floor(rng.next() * legal.length)], map: maps[k % maps.length], seed: Math.floor(rng.next() * 1e9), side: (k % 2) as 0 | 1 }))
+    Array.from({ length: n }, (_, k) => ({
+      comp: COMP ? decode(COMP) : legal[Math.floor(rng.next() * legal.length)],
+      ...(VS ? { vsComp: decode(VS) } : {}),
+      map: maps[k % maps.length],
+      seed: Math.floor(rng.next() * 1e9),
+      side: (k % 2) as 0 | 1,
+    }))
 
   const clip = (k: (typeof KNOBS)[number], v: number) => Math.max(k.lo, Math.min(k.hi, v))
-  let mean = KNOBS.map((k) => k.def)
+  // 対抗戦術の探索は、相手と同じ CPU の重みから始める
+  let mean = KNOBS.map((k) => clip(k, ((fixedOpp ?? {}) as Record<string, number>)[k.key] ?? k.def))
   let sd = KNOBS.map((k) => (k.hi - k.lo) * 0.25)
   const rng = createRng(2024)
   const gauss = () => Math.sqrt(-2 * Math.log(1 - rng.next())) * Math.cos(2 * Math.PI * rng.next())
@@ -102,7 +121,7 @@ if (!isMainThread) {
   for (let gen = 0; gen < GENS; gen++) {
     const cands = [mean, ...Array.from({ length: POP - 1 }, () => KNOBS.map((k, i) => clip(k, mean[i] + sd[i] * gauss())))]
     const mus = matchups(rng, GAMES)
-    const opps = [base, vec(mean)]
+    const opps = fixedOpp ? [fixedOpp, fixedOpp] : [base, vec(mean)]
     const jobs: Job[] = []
     for (const c of cands) for (const o of opps) for (const m of mus) jobs.push({ a: vec(c), b: o, ...m })
     const pts = await run(jobs)
@@ -130,7 +149,8 @@ if (!isMainThread) {
   const VAL = 1200
   const mirror = matchups(vrng, VAL)
   const final = vec(mean)
-  const vm = await run(mirror.map((m) => ({ a: final, b: base, ...m })))
+  const vm = await run(mirror.map((m) => ({ a: final, b: fixedOpp ?? base, ...m })))
+  const v0 = fixedOpp ? await run(mirror.map((m) => ({ a: fixedOpp, b: fixedOpp, ...m }))) : []
   const avg = (xs: number[]) => xs.reduce((a, b) => a + b, 0) / xs.length
   const pct = (x: number) => `${(x * 100).toFixed(1)}%`
 
@@ -150,7 +170,10 @@ if (!isMainThread) {
   o('## 標準CPUとの対戦（確かめ）')
   o(`| 対戦 | 試合数 | 調整後の勝ち点率 |`)
   o('|---|---|---|')
-  o(`| 同じ編成どうし（調整に使っていない対戦） | ${VAL} | ${pct(avg(vm))} |`)
+  if (fixedOpp) {
+    o(`| ${COMP} 対 ${VS}、相手と同じCPUで動かした場合（比較） | ${VAL} | ${pct(avg(v0))} |`)
+    o(`| ${COMP} 対 ${VS}、探索した重みで動かした場合 | ${VAL} | ${pct(avg(vm))} |`)
+  } else o(`| 同じ編成どうし（調整に使っていない対戦） | ${VAL} | ${pct(avg(vm))} |`)
   o()
   o('## 世代ごとの推移（その世代の平均の重みが、標準CPUと今の平均に対して）')
   o('| 世代 | 標準CPUに | 今の平均に |')
