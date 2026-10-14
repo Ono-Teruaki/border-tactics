@@ -55,6 +55,10 @@ export interface UnitClass {
   arc: boolean
   /** 爆風（擲弾兵）: 命中したら、狙った敵の上下左右にいる敵にも、この割合のダメージ（0 = なし）。爆発は防護兵が庇えない */
   blast: number
+  /** 捕縛（捕縛師）: 攻撃の代わりに、狙った敵を自分が移動前にいたマスへ放り投げる（ダメージなし・命中判定なし） */
+  bind: boolean
+  /** 遮蔽（遮蔽兵）: 撃たない手に、狙ったマスを中心に 3×3 の遮蔽フィールドを張る。フィールドは視線と射線を遮る */
+  veil: boolean
   /** 隠密: 条件（skills.stealthTrigger）を満たした手と次の手、敵がこのユニットを見つけられる距離をこの値だけ下げる（透視は別） */
   stealth: number
   move: number
@@ -158,6 +162,12 @@ export interface RulesConfig {
     blastShape: 'plus' | 'square'
     /** 曲射はマスを狙う（命中判定なし。着弾したマスと爆風の範囲にいる敵に当たる）。false で従来どおり敵を狙う */
     arcGround: boolean
+    /** 遮蔽フィールドを張れる距離（遮蔽兵の移動後の位置から中心のマスまで） */
+    veilRange: number
+    /** 遮蔽フィールドの半径（1 = 3×3） */
+    veilRadius: number
+    /** 遮蔽フィールドが残る手数（1 = 張った手と次の手） */
+    veilDuration: number
   }
   vision: {
     /** 屋上から見ても、ビルの裏側に張り付いた地上のマスは見えない */
@@ -179,6 +189,8 @@ export interface MapDef {
   spawns: [Pos[], Pos[]]
   /** レーダー塔（ビルのマス）。手の終わりに上にいると、次の手は敵全員が見える */
   radars?: Pos[]
+  /** 遮蔽フィールドのマス（"x,y"）。ここを通る視線・射線は遮られる（屋上からでも）。ゲーム中に盤面ごとに付け替える */
+  veil?: string[]
 }
 
 export interface Unit {
@@ -209,7 +221,7 @@ export interface Order {
   targetPos?: Pos
 }
 
-export type StrikeBlock = 'range' | 'blocked' | 'cover' | 'moved' | 'unseen' | 'gone' | 'down'
+export type StrikeBlock = 'range' | 'blocked' | 'cover' | 'moved' | 'unseen' | 'gone' | 'down' | 'occupied' | 'stayed'
 
 export interface ShotResult {
   hit: boolean
@@ -254,6 +266,10 @@ export type GameEvent =
     }
   /** 狙ったが撃てなかった */
   | { type: 'noshot'; unitId: string; targetId: string; reason: StrikeBlock }
+  /** 捕縛: 捕縛師が targetId を from から to（捕縛師の移動前のマス）へ放り投げた */
+  | { type: 'bind'; unitId: string; targetId: string; from: Pos; to: Pos }
+  /** 遮蔽フィールドを張った */
+  | { type: 'veil'; unitId: string; at: Pos; cells: Pos[] }
   /** 曲射の着弾（マスを狙う）。hits は直撃と爆風で当たった敵 */
   | { type: 'bombard'; unitId: string; from: Pos; at: Pos; hits: { id: string; damage: number; hp: number; direct: boolean }[] }
   | { type: 'bailout'; unitId: string; at: Pos }
@@ -281,6 +297,10 @@ export interface GameState {
   history: GameEvent[][]
   /** radarUntil[side]: この手まで、side はレーダー塔で敵全員が見える */
   radarUntil?: [number, number]
+  /** 素のマップ（遮蔽フィールドを付ける前）。map はフィールドを反映したもの */
+  baseMap?: MapDef
+  /** 張られている遮蔽フィールド（until の手の終わりまで） */
+  veils?: { unitId: string; side: Side; at: Pos; cells: Pos[]; until: number }[]
 }
 
 export interface Observation {

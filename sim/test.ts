@@ -297,6 +297,35 @@ const tests: Record<string, () => void> = {
     ev = resolveTurn(g, [[{ unitId: '0-0', dest: { x: 0, y: 0 }, targetPos: { x: 6, y: 2 } }, mv('0-1', 0, 2)], stay(g, 1)], createRng(1))
     assert.ok(ev.some((e) => e.type === 'noshot' && e.unitId === '0-0' && e.reason === 'range'))
   },
+  '捕縛師は狙った敵を、自分が移動前にいたマスへ放り投げる（攻撃の順番で）'() {
+    const g = createGame(mapOf(open, [{ x: 0, y: 2 }], [{ x: 6, y: 2 }]), rules1, [['binder'], ['gunner']])
+    unit(g, '0-0').pos = { x: 1, y: 2 }
+    unit(g, '1-0').pos = { x: 5, y: 2 }
+    // (1,2) → (3,2) に動いて、射程2の (5,2) の敵を (1,2) へ
+    const ev = resolveTurn(g, [[mv('0-0', 3, 2, '1-0')], stay(g, 1)], createRng(1))
+    assert.ok(ev.some((e) => e.type === 'bind' && e.targetId === '1-0'))
+    assert.deepEqual(unit(g, '1-0').pos, { x: 1, y: 2 })
+    assert.equal(unit(g, '1-0').hp, 22)
+    // 動かなければ使えない
+    const ev2 = resolveTurn(g, [[mv('0-0', 3, 2, '1-0')], stay(g, 1)], createRng(1))
+    assert.ok(ev2.some((e) => e.type === 'noshot' && e.reason === 'stayed'))
+  },
+  '遮蔽兵のフィールドは、通る視線と射線を遮る（屋上からでも）。中の駒は隣からしか見えない'() {
+    const g = createGame(mapOf(open, [{ x: 0, y: 2 }, { x: 0, y: 3 }], [{ x: 6, y: 2 }, { x: 6, y: 3 }]), rules2, [['screener', 'gunner'], ['gunner', 'scout']])
+    unit(g, '0-1').pos = { x: 2, y: 2 }
+    unit(g, '1-0').pos = { x: 5, y: 2 }
+    unit(g, '1-1').pos = { x: 3, y: 4 }
+    // 遮蔽兵が (3,2) を中心に張る → (2..4, 1..3) が遮蔽。敵ガンナー (5,2) は味方ガンナー (2,2) を撃てない
+    const ev = resolveTurn(g, [[{ unitId: '0-0', dest: { x: 0, y: 2 }, targetPos: { x: 3, y: 2 } }, mv('0-1', 2, 2)], [mv('1-0', 5, 2, '0-1'), mv('1-1', 3, 4)]], createRng(1))
+    assert.ok(ev.some((e) => e.type === 'veil'))
+    assert.ok(ev.some((e) => e.type === 'noshot' && e.unitId === '1-0'))
+    assert.equal(unit(g, '0-1').hp, 22)
+    assert.ok(!visibleEnemyIds(g, 1).has('0-1'))
+    // 期限（張った手と次の手）が過ぎれば消える
+    resolveTurn(g, [stay(g, 0), stay(g, 1)], createRng(1))
+    assert.equal(g.veils?.length, 0)
+    assert.ok(!g.map.veil)
+  },
   '張り付きの制限は射撃だけ。近接クラスは屋上から真下の敵を攻撃できる'() {
     const m = mapOf(['.#.....', '.......'], [{ x: 1, y: 0 }], [{ x: 2, y: 0 }])
     const g = createGame(m, rules1, [['attacker'], ['gunner']])

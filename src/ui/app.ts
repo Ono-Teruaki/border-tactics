@@ -1,6 +1,6 @@
 import { AI_PRESETS, CPU_COMPS, decideOrders } from '../engine/ai.ts'
 import { decideOrdersSearch, SEARCH_GAME } from '../engine/search.ts'
-import { attackRange, canFireAfterMove, canSee, canStrike, classOf, isMeleeClass, createGame, gameResult, observe, reachableFor, resolveTurn, strikeCheck } from '../engine/game.ts'
+import { attackRange, canFireAfterMove, canSee, canStrike, classOf, isMeleeClass, createGame, gameResult, observe, reachableFor, resolveTurn, strikeCheck, veilCells } from '../engine/game.ts'
 import { allPositions, dist, key, samePos, shortestPath, terrainId } from '../engine/grid.ts'
 import { MAPS } from '../engine/maps.ts'
 import { RECORD_VERSION, type GameRecord } from '../engine/record.ts'
@@ -29,6 +29,8 @@ function skillText(c: UnitClass): string {
   if (c.stealth) t.push(`隠密: ${rules.skills.stealthTrigger === 'descend' ? '屋上から降りた手' : '狙わない手'}と次の手は、敵から見つかる距離-${c.stealth}`)
   if (c.arc) t.push(rules.skills.arcGround ? '曲射: マスを狙って撃ち込む。ビル越しに届き、命中判定なしでそのマスに落ちる（敵が動けば外れる）' : '曲射: ビル越しに撃て、遮蔽を無視する（味方が見ている敵なら狙える）')
   if (c.blast) t.push(`爆風: ${rules.skills.arcGround ? '着弾したマス' : '当たると、狙った敵'}の${rules.skills.blastShape === 'square' ? '周囲8マス' : '上下左右'}の敵にも${Math.round(c.blast * 100)}%のダメージ。防護兵は庇えない`)
+  if (c.bind) t.push('捕縛: 攻撃の代わりに、射程内の敵を自分が移動前にいたマスへ放り投げる（ダメージなし。動かないと使えない）')
+  if (c.veil) t.push(`遮蔽: 撃たない手に、${rules.skills.veilRange}マス以内のマスを中心に3×3の遮蔽フィールドを張る。次の手の終わりまで、通る視線と射線を遮る（敵味方とも）`)
   if (c.guardReduce) t.push(`カバーリング: 狙わない手は周囲8マスの味方の被弾を肩代わり（-${Math.round(c.guardReduce * 100)}%）`)
   if (c.closePenalty) t.push(`懐に弱い: 隣接した敵への命中-${c.closePenalty}`)
   return t.join(' ／ ')
@@ -42,6 +44,8 @@ const BLOCK_LABEL: Record<StrikeBlock, string> = {
   unseen: '見失った',
   gone: '既に撃破',
   down: '撃つ前に撃破された',
+  occupied: '飛ばす先（移動前のマス）がふさがっている',
+  stayed: '移動していない（飛ばす先がない）',
 }
 
 const h = (tag: string, attrs: Record<string, any> = {}, ...children: (Node | string | null | false)[]) => {
@@ -159,7 +163,10 @@ function showHelp() {
 
 // ---------------- 戦闘画面 ----------------
 class Battle {
-  map: MapDef
+  /** 今の盤面のマップ（遮蔽フィールドを反映） */
+  get map(): MapDef {
+    return this.state.map
+  }
   comps: [string[], string[]]
   seed: number
   state: GameState
@@ -180,7 +187,6 @@ class Battle {
   lastSeen = new Map<string, { pos: Pos; turn: number }>()
 
   constructor(BoardClass: typeof Board3D, map: MapDef, comps: [string[], string[]], seed: number) {
-    this.map = map
     this.comps = comps
     this.seed = seed
     const streams = seedStreams(seed)
@@ -221,6 +227,11 @@ class Battle {
     return this.orders.get(u.id)?.dest ?? u.pos
   }
 
+  /** 遮蔽フィールドを張れるクラス（遮蔽兵） */
+  isVeil(u: Unit): boolean {
+    return classOf(rules, u).veil
+  }
+
   /** 曲射でマスを狙うクラス（擲弾兵） */
   isGround(u: Unit): boolean {
     return rules.skills.arcGround && classOf(rules, u).arc
@@ -234,6 +245,7 @@ class Battle {
   /** 敵がその場に留まった場合に、移動先から撃てるかの予測 */
   predictBlock(u: Unit): StrikeBlock | null {
     const tp = this.orders.get(u.id)?.targetPos
+    if (this.isVeil(u) && tp && !this.orders.get(u.id)?.target) return dist(this.destOf(u), tp) > rules.skills.veilRange ? 'range' : null
     if (this.isGround(u) && tp) {
       const d = this.destOf(u)
       if (!canFireAfterMove(rules, u, d)) return 'moved'
@@ -286,6 +298,17 @@ class Battle {
         this.orders.set(sel.id, { unitId: sel.id, dest: p, targetPos: cur?.targetPos })
         return this.render()
       }
+      // 遮蔽兵: 移動できないマスをタップ → そこを中心にフィールドを張る（狙いは外す。もう一度で解除）
+      if (this.isVeil(sel)) {
+        const enemyHere = Object.values(this.shownIntel).some((i) => i.visible && samePos(i.pos, p))
+        const canMove = reachableFor(this.map, rules, sel, this.state.turn).has(key(p)) && !mine.some((u) => u.id !== sel.id && samePos(this.destOf(u), p))
+        if (!enemyHere && !canMove) {
+          const cur = this.orders.get(sel.id)
+          const same = cur?.targetPos && samePos(cur.targetPos, p)
+          this.orders.set(sel.id, { unitId: sel.id, dest: this.destOf(sel), targetPos: same ? undefined : { ...p } })
+          return this.render()
+        }
+      }
       // 見えている敵をタップ → 狙う（もう一度で解除）
       const enemy = Object.values(this.shownIntel).find((i) => i.visible && samePos(i.pos, p))
       if (enemy) {
@@ -296,7 +319,7 @@ class Battle {
       const reach = reachableFor(this.map, rules, sel, this.state.turn)
       const plannedHere = mine.some((u) => u.id !== sel.id && samePos(this.destOf(u), p))
       if (reach.has(key(p)) && !plannedHere) {
-        this.orders.set(sel.id, { unitId: sel.id, dest: p, target: this.orders.get(sel.id)?.target })
+        this.orders.set(sel.id, { unitId: sel.id, dest: p, target: this.orders.get(sel.id)?.target, targetPos: this.orders.get(sel.id)?.targetPos })
         return this.render()
       }
     }
@@ -393,14 +416,18 @@ class Battle {
         }
       }
       mark(dest, 'dest')
+      // 遮蔽兵: 張る予定のフィールド
+      const vp = this.isVeil(sel) ? this.orders.get(sel.id)?.targetPos : undefined
+      if (vp) for (const c of veilCells(this.map, rules, vp)) mark(c, 'veil')
     }
     this.board.setMarks(marks)
+    this.board.setVeils((this.state.veils ?? []).map((v) => ({ cells: v.cells, side: v.side })))
 
     const plans: PlanSpec[] = []
     for (const u of mine) {
       const d = this.destOf(u)
       const t = this.targetIntel(u)
-      const tp = this.isGround(u) ? this.orders.get(u.id)?.targetPos : undefined
+      const tp = this.isGround(u) || this.isVeil(u) ? this.orders.get(u.id)?.targetPos : undefined
       plans.push({
         id: u.id,
         cls: u.cls,
@@ -432,7 +459,15 @@ class Battle {
         h(
           'div',
           { class: `hint ${(t || tp) && block ? 'warn' : ''}` },
-          this.isGround(sel)
+          this.isVeil(sel) && !t
+            ? this.orders.get(sel.id)?.targetPos
+              ? block
+                ? 'フィールドの中心が遠すぎます（移動先から3マスまで）'
+                : '遮蔽フィールド: 次の手の終わりまで、3×3 の範囲を通る視線と射線を遮ります（敵も味方も）。中の駒は隣からしか見えません'
+              : '移動先（青）→ フィールドの中心にするマス（移動できないマス）をタップ。敵をタップすれば普通に撃ちます'
+            : c.bind && !t
+              ? '移動先（青）→ 射程2以内の敵をタップ。移動前にいたマスへ放り投げます（動かないと使えません）'
+              : this.isGround(sel)
             ? tp
               ? block
                 ? `着弾マス: 今の位置からは「${BLOCK_LABEL[block]}」`
@@ -497,7 +532,10 @@ class Battle {
     if (this.busy || this.state.over) return
     this.busy = true
     this.selected = null
-    const myOrders: Order[] = this.me().map((u) => ({ unitId: u.id, dest: { ...this.destOf(u) }, target: this.orders.get(u.id)?.target }))
+    const myOrders: Order[] = this.me().map((u) => {
+      const o = this.orders.get(u.id)
+      return { unitId: u.id, dest: { ...this.destOf(u) }, target: o?.target, ...(o?.targetPos ? { targetPos: { ...o.targetPos } } : {}) }
+    })
     if (!this.cpuPending) this.startCpuThinking()
     const cpuOrders = await this.cpuPending!
     this.cpuPending = null
@@ -680,6 +718,25 @@ class Battle {
         }
         if (e.splash?.length) await this.board.shake(260, 0.8)
         show()
+      } else if (e.type === 'veil') {
+        const mine = isMine(e.unitId)
+        this.caption(`${mine ? this.name(e.unitId) : '敵'} 遮蔽フィールド展開：この範囲を通る視線と射線が次の手の終わりまで遮られる`)
+        this.board.setVeils((this.state.veils ?? []).map((v) => ({ cells: v.cells, side: v.side })))
+        await this.board.focus([e.at], 380)
+        this.board.popup(e.at, '遮蔽', mine ? '#5ee6d0' : '#ff9a8a', 900)
+        await this.board.wait(450)
+      } else if (e.type === 'bind') {
+        if (!isMine(e.unitId) && !disp.get(e.unitId)) reveal(e.unitId, unitOf(e.unitId).pos)
+        if (!isMine(e.targetId) && !disp.get(e.targetId)) reveal(e.targetId, e.from)
+        show()
+        this.caption(`${this.name(e.unitId)} 捕縛 → ${this.name(e.targetId)} を (${e.to.x},${e.to.y}) へ放り投げる`)
+        await this.board.focus([e.from, e.to], 420)
+        this.board.popup(e.from, '捕縛', '#5ee6d0', 800)
+        await this.board.toss(e.targetId, e.to)
+        const d = disp.get(e.targetId)
+        if (d) d.pos = e.to
+        show()
+        await this.board.wait(200)
       } else if (e.type === 'bombard') {
         if (!isMine(e.unitId)) {
           reveal(e.unitId, e.from)
@@ -810,6 +867,9 @@ class Battle {
         lines.push(`${this.name(e.unitId)} → ${this.name(e.hitId)}: ${hits}/${e.shots.length}発命中 -${e.damage}（命中率${e.chance}%）${g ? `［${this.name(g)}が庇って -${gd}］` : ''}${e.spotted && u.side === 0 ? '［索敵連携］' : ''}`)
         for (const s of e.splash ?? []) lines.push(`　爆風: ${this.name(s.id)} -${s.damage}`)
       }
+      if (e.type === 'bind') lines.push(`${this.name(e.unitId)} 捕縛: ${this.name(e.targetId)} を (${e.to.x},${e.to.y}) へ`)
+      if (e.type === 'veil' && u.side === 0) lines.push(`${this.name(e.unitId)}: 遮蔽フィールド (${e.at.x},${e.at.y})`)
+      if (e.type === 'veil' && u.side === 1) lines.push(`敵が遮蔽フィールドを展開 (${e.at.x},${e.at.y})`)
       if (e.type === 'bombard') lines.push(`${this.name(e.unitId)} 砲撃 (${e.at.x},${e.at.y}): ${e.hits.length ? e.hits.map((x) => `${this.name(x.id)} -${x.damage}${x.direct ? '' : '（爆風）'}`).join('・') : '空振り'}`)
       if (e.type === 'bailout') lines.push(`💥 ${this.name(e.unitId)} 撃破`)
       if (e.type === 'radar') lines.push(u.side === 0 ? `📡 ${this.name(e.unitId)}: レーダー塔を確保（次の手は敵全員が見える）` : '📡 敵がレーダー塔を確保（次の手は位置が見られる）')

@@ -14,7 +14,7 @@ export function createGame(map: MapDef, rules: RulesConfig, comps: [string[], st
       units.push({ id: `${side}-${i}`, side, cls, pos: { ...map.spawns[side][i] }, hp: c.hp, alive: true, markedUntil: 0, suppressedUntil: 0, markCooldownUntil: 0, stealthUntil: 0, jammedUntil: 0 })
     })
   }
-  const state: GameState = { map, rules, units, turn: 1, kills: [0, 0], killCost: [0, 0], intel: [{}, {}], over: false, history: [], radarUntil: [0, 0] }
+  const state: GameState = { map, rules, units, turn: 1, kills: [0, 0], killCost: [0, 0], intel: [{}, {}], over: false, history: [], radarUntil: [0, 0], baseMap: map, veils: [] }
   // 出撃位置と編成はお互いに既知
   for (const u of units) {
     state.intel[(1 - u.side) as Side][u.id] = { unitId: u.id, cls: u.cls, pos: { ...u.pos }, hp: u.hp, turn: 0, visible: false }
@@ -26,7 +26,7 @@ export function createGame(map: MapDef, rules: RulesConfig, comps: [string[], st
 export const classOf = (rules: RulesConfig, u: { cls: string }): UnitClass => rules.classes[u.cls]
 
 /** スキルを無効化されたときに外す項目（弱点や移動制限は残す） */
-const SILENCED: Partial<UnitClass> = { pursuit: false, markOnSight: false, sonar: 0, suppress: false, steadyAim: false, heal: 0, guardReduce: 0, evac: false, stealth: 0, jamOnClimb: false, arc: false, blast: 0 }
+const SILENCED: Partial<UnitClass> = { pursuit: false, markOnSight: false, sonar: 0, suppress: false, steadyAim: false, heal: 0, guardReduce: 0, evac: false, stealth: 0, jamOnClimb: false, arc: false, blast: 0, bind: false, veil: false }
 /** 妨害を受けていて、スキルが使えない */
 export const isSilenced = (rules: RulesConfig, u: { jammedUntil: number }, turn: number) => rules.skills.jamSilence && u.jammedUntil >= turn
 /** スキルの無効化を反映したクラス性能 */
@@ -66,6 +66,21 @@ export function canSee(map: MapDef, rules: RulesConfig, cls: string, at: Pos, ta
   if (!lineOfSight(map, rules, at, target, terrain(map, rules, at).seesOverBlockers)) return false
   if (rules.vision.deadZone && fromRoof && d > 1 && isWallHugging(map, at, target)) return false
   return true
+}
+
+/** 遮蔽フィールドを反映したマップを作り直す */
+function applyVeils(state: GameState) {
+  const base = state.baseMap ?? state.map
+  const cells = (state.veils ?? []).flatMap((v) => v.cells.map((c) => `${c.x},${c.y}`))
+  state.map = cells.length ? { ...base, veil: [...new Set(cells)] } : base
+}
+
+/** 中心 at の遮蔽フィールドのマス（盤内） */
+export function veilCells(map: MapDef, rules: RulesConfig, at: Pos): Pos[] {
+  const r = rules.skills.veilRadius
+  const out: Pos[] = []
+  for (let y = at.y - r; y <= at.y + r; y++) for (let x = at.x - r; x <= at.x + r; x++) if (inBounds(map, { x, y })) out.push({ x, y })
+  return out
 }
 
 /** 隠密中のユニットを見つけられる距離の減り幅 */
@@ -195,7 +210,9 @@ function defeat(state: GameState, u: Unit, events: GameEvent[]) {
  */
 export function resolveTurn(state: GameState, orders: [Order[], Order[]], rng: Rng): GameEvent[] {
   if (state.over) return []
-  const { map, rules } = state
+  // map は遮蔽フィールドを張ったら差し替える
+  let map = state.map
+  const rules = state.rules
   const T = state.turn
   const events: GameEvent[] = []
   const alive = state.units.filter((u) => u.alive)
@@ -260,6 +277,21 @@ export function resolveTurn(state: GameState, orders: [Order[], Order[]], rng: R
   }
   if (rules.bumpReveals) {
     for (const u of alive) if (contact.has(u.id)) reveal(state, (1 - u.side) as Side, u, T)
+  }
+
+  // --- 遮蔽: 遮蔽兵が狙ったマスを中心にフィールドを張る（この手の交戦から効く） ---
+  for (const u of alive) {
+    const o = orderOf(u)
+    if (!skillClass(rules, u, T).veil || !o?.targetPos || o.target) continue
+    if (dist(u.pos, o.targetPos) > rules.skills.veilRange) continue
+    const cells = veilCells(map, rules, o.targetPos)
+    state.veils ??= []
+    state.veils.push({ unitId: u.id, side: u.side, at: { ...o.targetPos }, cells, until: T + rules.skills.veilDuration })
+    events.push({ type: 'veil', unitId: u.id, at: { ...o.targetPos }, cells })
+  }
+  if (events.some((e) => e.type === 'veil')) {
+    applyVeils(state)
+    map = state.map
   }
 
   // --- 隠密: 条件を満たしたユニットは、この手と次の手、見つかりにくい ---
@@ -346,9 +378,24 @@ export function resolveTurn(state: GameState, orders: [Order[], Order[]], rng: R
     else if (!t || !t.alive) reason = 'gone'
     else if (dist(origin.get(u.id)!, u.pos) > cls.attackMaxMove) reason = 'moved'
     else if (!(rules.sharedTargeting ? teamVis[u.side].has(t.id) : canSee(map, rules, u.cls, u.pos, t.pos))) reason = 'unseen'
-    else reason = strikeCheck(map, rules, u.pos, t.pos, attackRange(map, rules, u.cls, u.pos), isMeleeClass(rules, u.cls), cls.arc)
+    else reason = strikeCheck(map, rules, u.pos, t.pos, attackRange(map, rules, u.cls, u.pos), isMeleeClass(rules, u.cls) || cls.bind, cls.arc)
     if (reason || !t) {
       events.push({ type: 'noshot', unitId: u.id, targetId, reason: reason ?? 'gone' })
+      continue
+    }
+    // 捕縛: 狙った敵を、捕縛師が移動前にいたマスへ放り投げる（ダメージなし・命中判定なし）
+    if (cls.bind) {
+      const to = origin.get(u.id)!
+      if (samePos(to, u.pos)) reason = 'stayed'
+      else if (state.units.some((x) => x.alive && x.id !== t.id && samePos(x.pos, to))) reason = 'occupied'
+      if (reason) {
+        events.push({ type: 'noshot', unitId: u.id, targetId, reason })
+        continue
+      }
+      const from = { ...t.pos }
+      t.pos = { ...to }
+      events.push({ type: 'bind', unitId: u.id, targetId: t.id, from, to: { ...to } })
+      attackers.push(u)
       continue
     }
     const tc = classOf(rules, t)
@@ -482,6 +529,12 @@ export function resolveTurn(state: GameState, orders: [Order[], Order[]], rng: R
       if (rules.radarMark) for (const e of state.units) if (e.alive && e.side !== u.side) e.markedUntil = Math.max(e.markedUntil, T + 1)
       events.push({ type: 'radar', unitId: u.id, side: u.side })
     }
+  }
+
+  // 遮蔽フィールドの期限切れ
+  if (state.veils?.length) {
+    state.veils = state.veils.filter((v) => v.until >= T + 1)
+    applyVeils(state)
   }
 
   state.history.push(events)

@@ -81,7 +81,7 @@ export function decideOrders(obs: Observation, rng: Rng, params: AiParams): Orde
   const known: Known[] = obs.enemies
     .map((e) => ({ ...e, age: e.visible ? 0 : obs.turn - e.turn }))
     .filter((e) => e.age <= params.memory || e.turn === 0)
-  const isSupport = (u: Unit) => classOf(rules, u).heal > 0 || classOf(rules, u).guardReduce > 0
+  const isSupport = (u: Unit) => classOf(rules, u).heal > 0 || classOf(rules, u).guardReduce > 0 || classOf(rules, u).veil
   const isLateHealer = (u: Unit) => !!params.healerLast && classOf(rules, u).heal > 0
   const ctx: Ctx = { obs, known, reserved: new Set(), planned: new Map(obs.mine.map((u) => [u.id, u.pos])), guards: [], targets: new Map(), dmg: new Map(), radarRunner: radarRunners(obs), rng, p: params }
   const fw = params.fireWeight ?? 1.5
@@ -127,7 +127,10 @@ export function decideOrders(obs: Observation, rng: Rng, params: AiParams): Orde
     }
     const sup = supportValue(ctx, u, o.dest)
     const fire = fireValue(ctx, u, o.dest)
-    const next = { ...o, target: sup.value >= fire.value * fw * params.aggression || !fire.target ? undefined : fire.target }
+    const support = sup.value >= fire.value * fw * params.aggression || !fire.target
+    const next: Order = { unitId: o.unitId, dest: o.dest, target: support ? undefined : fire.target }
+    // 遮蔽兵: 支援の手なら、味方が一番守れるマスにフィールドを張る
+    if (support && sup.at) next.targetPos = sup.at
     orders.set(u.id, next)
     aim(next)
   }
@@ -174,6 +177,33 @@ function strikeEstimate(ctx: Ctx, u: Unit, pos: Pos, e: Intel, hpLeft: number): 
   return { exp: expectedDamage(map, rules, cls, ec, from, e.pos, opts) * far, kill: killChance(map, rules, cls, ec, from, e.pos, hpLeft, opts) * far }
 }
 
+/**
+ * 捕縛師: pos へ動いて、射程内の敵を自分の移動前のマス（u.pos）へ放り投げる見込み。
+ * 投げた先を撃てる味方が多いほど、相手が射手ほど価値が高い
+ */
+function bindValue(ctx: Ctx, u: Unit, pos: Pos): { value: number; target?: string } {
+  const { map, rules } = ctx.obs
+  if (samePos(pos, u.pos)) return { value: 0 }
+  if ([...ctx.planned].some(([id, ap]) => id !== u.id && samePos(ap, u.pos))) return { value: 0 }
+  const ar = attackRange(map, rules, u.cls, pos)
+  let shooters = 0
+  for (const a of ctx.obs.mine) {
+    if (a.id === u.id) continue
+    const ap = ctx.planned.get(a.id) ?? a.pos
+    const ac = classOf(rules, a)
+    if (canStrike(map, rules, ap, u.pos, attackRange(map, rules, a.cls, ap), isMeleeClass(rules, a.cls), ac.arc)) shooters++
+  }
+  let value = 0
+  let target: string | undefined
+  for (const e of ctx.known) {
+    if (e.age > 0 || !canStrike(map, rules, pos, e.pos, ar, true)) continue
+    const ec = classOf(rules, e)
+    const v = (0.4 + 0.45 * shooters) * (ec.cost / 2) * (ec.range > 1 ? 1.3 : 1)
+    if (v > value) (value = v), (target = e.unitId)
+  }
+  return { value, target }
+}
+
 /** 決定済みの狙いの期待ダメージ（倒し切りの見積もりで味方の分を差し引くため） */
 function aimDamage(ctx: Ctx, u: Unit, pos: Pos, target: string): number {
   const e = ctx.known.find((k) => k.unitId === target && k.age === 0)
@@ -208,6 +238,7 @@ function blastValue(ctx: Ctx, u: Unit, pos: Pos, e: Intel): number {
 /** 移動先 pos からの射撃の見込み（敵がその場に留まると仮定） */
 function fireValue(ctx: Ctx, u: Unit, pos: Pos): { value: number; target?: string } {
   const { rules } = ctx.obs
+  if (classOf(rules, u).bind && !isSilenced(rules, u, ctx.obs.turn)) return bindValue(ctx, u, pos)
   const kw = ctx.p.killWeight ?? 0
   let value = 0
   let target: string | undefined
@@ -245,11 +276,28 @@ function threatAt(ctx: Ctx, cls: UnitClass, hp: number, pos: Pos): number {
 }
 
 /** 支援（狙いなし）にした場合の価値 */
-function supportValue(ctx: Ctx, u: Unit, pos: Pos): { value: number } {
+function supportValue(ctx: Ctx, u: Unit, pos: Pos): { value: number; at?: Pos } {
   const { rules } = ctx.obs
   // 妨害でスキルを封じられている間は、回復も庇いもできない
   if (isSilenced(rules, u, ctx.obs.turn)) return { value: 0 }
   const c = classOf(rules, u)
+  // 遮蔽兵: 射程内のマスごとに、フィールドに入る味方（自分も含む）の被弾リスクの合計を比べる
+  if (c.veil) {
+    const { map } = ctx.obs
+    const sk = rules.skills
+    const allies = ctx.obs.mine.map((a) => ({ a, ap: a.id === u.id ? pos : (ctx.planned.get(a.id) ?? a.pos) }))
+    const risk = new Map(allies.map(({ a, ap }) => [a.id, threatAt(ctx, classOf(rules, a), a.hp, ap)]))
+    let best: { value: number; at?: Pos } = { value: 0 }
+    for (let y = pos.y - sk.veilRange; y <= pos.y + sk.veilRange; y++)
+      for (let x = pos.x - sk.veilRange; x <= pos.x + sk.veilRange; x++) {
+        const at = { x, y }
+        if (x < 0 || y < 0 || x >= map.width || y >= map.height || dist(pos, at) > sk.veilRange) continue
+        let v = 0
+        for (const { a, ap } of allies) if (Math.abs(ap.x - x) <= sk.veilRadius && Math.abs(ap.y - y) <= sk.veilRadius) v += risk.get(a.id)! * 0.45
+        if (v > best.value) best = { value: v, at }
+      }
+    return best
+  }
   let value = 0
   for (const a of ctx.obs.mine) {
     if (a.id === u.id) continue
@@ -280,7 +328,7 @@ function bestOrder(ctx: Ctx, u: Unit): Order {
   const cls = classOf(rules, u)
   const ideal = cls.range > 1 ? cls.range : cls.vision >= 6 ? cls.vision - 2 : cls.heal > 0 || cls.guardReduce > 0 ? 3 : 1
   const isScout = cls.vision >= 6
-  const isSupport = cls.heal > 0 || cls.guardReduce > 0
+  const isSupport = cls.heal > 0 || cls.guardReduce > 0 || cls.veil
 
   let best: { score: number; pos: Pos; target?: string } | null = null
   for (const { pos } of reachableFor(map, rules, u, obs.turn).values()) {

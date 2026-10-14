@@ -91,6 +91,7 @@ function cloneState(s: GameState): GameState {
     intel: [structuredClone(s.intel[0]), structuredClone(s.intel[1])],
     history: [],
     radarUntil: s.radarUntil ? [...s.radarUntil] : [0, 0],
+    veils: s.veils ? s.veils.map((v) => ({ ...v })) : [],
   }
 }
 
