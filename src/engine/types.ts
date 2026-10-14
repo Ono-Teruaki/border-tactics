@@ -29,6 +29,18 @@ export interface UnitClass {
   closePenalty: number
   /** 追撃: 狙った敵の移動先に合わせて、移動力の範囲で隣接マスへ詰める */
   pursuit: boolean
+  /** 観測: 自分の視界に入った敵にマークを付ける */
+  markOnSight: boolean
+  /** 透視: この距離以内の敵は建物越しでも見える（0 = なし） */
+  sonar: number
+  /** 制圧射撃: 1回の攻撃で2発以上当てた敵を制圧する */
+  suppress: boolean
+  /** 狙撃態勢: 移動しなかった手は命中率アップ・遮蔽の影響半減 */
+  steadyAim: boolean
+  /** 応急手当: 支援（狙いなし）の手の終わりに周囲8マスの味方を回復する量（0 = なし） */
+  heal: number
+  /** カバーリング: 支援の手、周囲8マスの味方への命中弾を肩代わりし、この割合だけ軽減（0 = なし） */
+  guardReduce: number
   move: number
   range: number
   vision: number
@@ -78,6 +90,27 @@ export interface RulesConfig {
     /** 同じ速のときの順番決めに使う乱数幅 */
     initiativeJitter: number
   }
+  skills: {
+    /** マークの持続（手）。1 = 次の手の終わりまで */
+    markDuration: number
+    /** マークした敵への味方の命中率ボーナス */
+    markAccBonus: number
+    /** 1手でマークできる最大数（スカウト1体あたり） */
+    markPerTurn: number
+    /** マークを使った後、次に使えるまでの手数（0 = 毎手） */
+    markCooldown: number
+    suppressMove: number
+    suppressAcc: number
+    steadyAcc: number
+    /** 防護兵1体が1手で肩代わりできる命中弾の数 */
+    guardHitsPerTurn: number
+    /** 同じクラスを編成できる上限 */
+    maxPerClass: number
+  }
+  vision: {
+    /** 屋上から見ても、ビルの裏側に張り付いた地上のマスは見えない */
+    deadZone: boolean
+  }
   /** 攻撃したユニットの位置は相手に露見する */
   attackReveals: boolean
   /** 敵と同じマスに移動しようとして弾かれたとき、互いの位置が露見する */
@@ -101,6 +134,12 @@ export interface Unit {
   pos: Pos
   hp: number
   alive: boolean
+  /** この手まで「マーク」（相手から見え続け、被命中率アップ） */
+  markedUntil: number
+  /** この手まで「制圧」（移動力・命中率ダウン） */
+  suppressedUntil: number
+  /** この手まで観測スキルが使えない */
+  markCooldownUntil: number
 }
 
 /** 命令: 移動先と、狙う敵（任意）。移動後に射程・射線が通り、見えていれば撃つ */
@@ -115,6 +154,8 @@ export type StrikeBlock = 'range' | 'blocked' | 'cover' | 'moved' | 'unseen' | '
 export interface ShotResult {
   hit: boolean
   damage: number
+  /** 防護兵が肩代わりした */
+  guardedBy?: string
 }
 
 export interface Intel {
@@ -150,6 +191,10 @@ export type GameEvent =
   /** 狙ったが撃てなかった */
   | { type: 'noshot'; unitId: string; targetId: string; reason: StrikeBlock }
   | { type: 'bailout'; unitId: string; at: Pos }
+  | { type: 'mark'; unitId: string; targets: string[] }
+  | { type: 'suppress'; unitId: string; targetId: string }
+  | { type: 'heal'; unitId: string; targets: { id: string; amount: number }[] }
+  | { type: 'pursuit'; unitId: string; from: Pos; to: Pos }
 
 export interface GameState {
   map: MapDef

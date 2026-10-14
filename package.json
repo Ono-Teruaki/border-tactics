@@ -9,7 +9,8 @@
     "preview": "vite preview",
     "test": "node sim/test.ts",
     "sim": "node sim/run.ts",
-    "typecheck": "tsc"
+    "typecheck": "tsc",
+    "meta": "node sim/meta.ts"
   },
   "devDependencies": {
     "@types/node": "^26.6.5",

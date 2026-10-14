@@ -1,6 +1,6 @@
 // ルール仕様テスト: node sim/test.ts
 import assert from 'node:assert/strict'
-import { createGame, gameResult, observe, resolveTurn, visibleEnemyIds } from '../src/engine/game.ts'
+import { createGame, gameResult, moveOf, observe, resolveTurn, visibleEnemyIds } from '../src/engine/game.ts'
 import { DEFAULT_RULES, mergeRules } from '../src/engine/rules.ts'
 import { createRng, seedStreams } from '../src/engine/rng.ts'
 import { replayRecord, type GameRecord } from '../src/engine/record.ts'
@@ -73,7 +73,7 @@ const tests: Record<string, () => void> = {
   '命中率: 距離で下がり、隠れ具合でさらに下がる'() {
     const m = mapOf(['.......', '...#...', '.......'], [{ x: 0, y: 0 }], [{ x: 6, y: 0 }])
     const G = DEFAULT_RULES.classes.gunner
-    assert.equal(hitChance(m, DEFAULT_RULES, G, { x: 0, y: 2 }, { x: 1, y: 2 }).chance, 80)
+    assert.equal(hitChance(m, DEFAULT_RULES, G, { x: 0, y: 2 }, { x: 1, y: 2 }).chance, 60) // 隣接は懐デバフ -20
     assert.equal(hitChance(m, DEFAULT_RULES, G, { x: 0, y: 2 }, { x: 3, y: 2 }).chance, 60)
     // (4,1) は西側の (3,1) ビルに張り付いている → 西から撃つと half
     assert.deepEqual(hitChance(m, DEFAULT_RULES, G, { x: 1, y: 1 }, { x: 4, y: 1 }), { chance: 60 - 25 + 0, cover: 'half' })
@@ -93,22 +93,81 @@ const tests: Record<string, () => void> = {
   },
   '屋上は視界+2・射程+1、ビル越しに見通せる（が撃てない）'() {
     const m = mapOf(['.........', '.#..#....', '.........'], [{ x: 1, y: 1 }], [{ x: 8, y: 1 }])
-    const g = createGame(m, rules1, [['gunner'], ['scout']])
+    const r = mergeRules(rules1, { classes: { gunner: { range: 5 } } })
+    const g = createGame(m, r, [['gunner'], ['scout']])
     // ガンナー視界4 + 2 = 6 だが距離7 → 見えない
     assert.equal(visibleEnemyIds(g, 0).size, 0)
-    g.units[1].pos = { x: 5, y: 1 }
+    g.units[1].pos = { x: 6, y: 1 }
     assert.equal(visibleEnemyIds(g, 0).size, 1) // 途中のビル(4,1)越しに見える
-    let ev = resolveTurn(g, [stay(g, 0, '1-0'), stay(g, 1)], createRng(1))
+    const ev = resolveTurn(g, [stay(g, 0, '1-0'), stay(g, 1)], createRng(1))
     assert.deepEqual(ev.find((e) => e.type === 'noshot'), { type: 'noshot', unitId: '0-0', targetId: '1-0', reason: 'blocked' })
-    // 射線が通れば射程 3 + 1 = 4
+    // 射線が通れば撃てる（射程 5 + 1）
     g.units[1].pos = { x: 4, y: 2 }
     resolveTurn(g, [stay(g, 0, '1-0'), stay(g, 1)], createRng(1))
     assert.equal(unit(g, '1-0').hp, 1) // 16 - 5×3
     // fireOverBuildings ならビル越しに撃てる
-    const g2 = createGame(m, mergeRules(rules1, { cover: { fireOverBuildings: true, wallHug: false } }), [['gunner'], ['scout']])
-    g2.units[1].pos = { x: 5, y: 1 }
+    const g2 = createGame(m, mergeRules(r, { cover: { fireOverBuildings: true } }), [['gunner'], ['scout']])
+    g2.units[1].pos = { x: 6, y: 1 }
     resolveTurn(g2, [stay(g2, 0, '1-0'), stay(g2, 1)], createRng(1))
     assert.equal(unit(g2, '1-0').hp, 1)
+  },
+  '死角: 屋上からでもビルの裏に張り付いた敵は見えない（透視なら見える）'() {
+    const m = mapOf(['.........', '.#..#....', '.........'], [{ x: 1, y: 1 }], [{ x: 5, y: 1 }])
+    const g = createGame(m, rules1, [['gunner'], ['gunner']])
+    assert.equal(visibleEnemyIds(g, 0).size, 0)
+    const g2 = createGame(m, mergeRules(rules1, { vision: { deadZone: false } }), [['gunner'], ['gunner']])
+    assert.equal(visibleEnemyIds(g2, 0).size, 1)
+    const g3 = createGame(m, mergeRules(rules1, { classes: { gunner: { sonar: 4 } } }), [['gunner'], ['gunner']])
+    assert.equal(visibleEnemyIds(g3, 0).size, 1)
+  },
+  '観測: スカウトが見た敵はマークされ、次の手もビルの裏から見え続ける'() {
+    const m = mapOf(['.......', '...#...', '.......'], [{ x: 0, y: 1 }], [{ x: 4, y: 0 }])
+    const g = createGame(m, rules1, [['scout'], ['gunner']])
+    // スカウト(0,1)から(4,0)は見える → マーク
+    const ev = resolveTurn(g, [stay(g, 0), stay(g, 1)], createRng(1))
+    assert.ok(ev.some((e) => e.type === 'mark'))
+    // 敵がビルの裏(4,1)へ。ビルが視線を遮るが、マーク中なので見える
+    resolveTurn(g, [stay(g, 0), [mv('1-0', 4, 1)]], createRng(1))
+    assert.equal(g.intel[0]['1-0'].visible, false) // 次の手（3手目）にはマーク切れ
+    const g2 = createGame(m, rules1, [['scout'], ['gunner']])
+    resolveTurn(g2, [stay(g2, 0), stay(g2, 1)], createRng(1))
+    g2.units[1].pos = { x: 4, y: 1 }
+    assert.equal(visibleEnemyIds(g2, 0).size, 1) // 2手目の途中はマークで見える
+  },
+  '制圧: ガンナーが2発以上当てると次の手の移動力-1'() {
+    const g = createGame(mapOf(open, [{ x: 0, y: 2 }], [{ x: 3, y: 2 }]), rules1, [['gunner'], ['attacker']])
+    const ev = resolveTurn(g, [stay(g, 0, '1-0'), stay(g, 1)], createRng(1))
+    assert.ok(ev.some((e) => e.type === 'suppress'))
+    assert.equal(moveOf(g.rules, unit(g, '1-0'), g.turn), 2)
+    assert.equal(moveOf(g.rules, unit(g, '1-0'), g.turn + 1), 3)
+  },
+  '狙撃態勢: 動かなければ命中率+15・遮蔽半減'() {
+    const m = mapOf(['.......', '...#...', '.......'], [{ x: 0, y: 0 }], [{ x: 6, y: 0 }])
+    const S = DEFAULT_RULES.classes.sniper
+    // (4,1) は西の (3,1) ビルに張り付き。距離4 → 90-15=75, 遮蔽半 -25
+    assert.equal(hitChance(m, DEFAULT_RULES, S, { x: 0, y: 1 }, { x: 4, y: 1 }).chance, 50)
+    assert.equal(hitChance(m, DEFAULT_RULES, S, { x: 0, y: 1 }, { x: 4, y: 1 }, { stationary: true }).chance, 78) // 90 - 12.5 → 78
+  },
+  'カバーリング: 支援中の防護兵が隣の味方への命中弾を肩代わり'() {
+    const g = createGame(mapOf(open, [{ x: 0, y: 2 }], [{ x: 3, y: 2 }, { x: 4, y: 2 }]), mergeRules(rules2, { teamSize: 2 }), [['sniper', 'sniper'], ['gunner', 'guardian']])
+    g.units[1].pos = { x: 0, y: 3 }
+    const ev = resolveTurn(g, [stay(g, 0, '1-0'), [mv('1-0', 3, 2), mv('1-1', 4, 2)]], createRng(1))
+    const a = ev.find((e) => e.type === 'attack' && e.hitId === '1-0')!
+    assert.ok(a.type === 'attack' && a.shots.every((x) => x.guardedBy === '1-1'))
+    assert.equal(unit(g, '1-0').hp, 22)
+    // round(20²/(20+18)) = 11 → ×0.7 = 7.7 → 8 を2発
+    assert.equal(unit(g, '1-1').hp, 30 - 16)
+  },
+  '応急手当: 支援中の衛生兵が周囲8マスの味方を回復'() {
+    const g = createGame(mapOf(open, [{ x: 1, y: 1 }, { x: 2, y: 2 }], [{ x: 6, y: 4 }, { x: 6, y: 0 }]), rules2, [['medic', 'attacker'], ['gunner', 'gunner']])
+    g.units[1].hp = 10
+    const ev = resolveTurn(g, [stay(g, 0), stay(g, 1)], createRng(1))
+    assert.ok(ev.some((e) => e.type === 'heal'))
+    assert.equal(unit(g, '0-1').hp, 16)
+    // 狙いを付けると回復しない
+    g.units[1].hp = 10
+    resolveTurn(g, [[mv('0-0', 1, 1, '1-0'), mv('0-1', 2, 2)], stay(g, 1)], createRng(1))
+    assert.equal(unit(g, '0-1').hp, 10)
   },
   'ビルに張り付いた地上の敵は屋上から撃てない'() {
     const m = mapOf(['.#.....', '.......'], [{ x: 1, y: 0 }], [{ x: 2, y: 0 }])
@@ -171,7 +230,7 @@ const tests: Record<string, () => void> = {
   '棋譜から同じ試合を再生できる'() {
     const seed = 12345
     const st = seedStreams(seed)
-    const rec: GameRecord = { version: 3, seed, map: 'city9', comps: [['attacker', 'gunner', 'sniper', 'scout'], ['attacker', 'attacker', 'gunner', 'scout']], rules: DEFAULT_RULES, turns: [] }
+    const rec: GameRecord = { version: 4, seed, map: 'city9', comps: [['attacker', 'gunner', 'sniper', 'scout'], ['attacker', 'attacker', 'gunner', 'scout']], rules: DEFAULT_RULES, turns: [] }
     const g = createGame(MAPS[0], DEFAULT_RULES, rec.comps)
     while (!g.over) {
       const orders: [Order[], Order[]] = [decideOrders(observe(g, 0), st.ai, AI_PRESETS.aggressive), decideOrders(observe(g, 1), st.ai, AI_PRESETS.cpu)]

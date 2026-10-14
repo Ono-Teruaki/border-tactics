@@ -1,8 +1,8 @@
 import { expectedDamage } from './combat.ts'
-import { attackRange, canSee, canStrike, classOf, visionRange } from './game.ts'
-import { dist, key, reachable, terrain } from './grid.ts'
+import { attackRange, canSee, canStrike, chebyshev, classOf, reachableFor, visionRange } from './game.ts'
+import { dist, key, samePos, terrain } from './grid.ts'
 import type { Rng } from './rng.ts'
-import type { Intel, Observation, Order, Pos, Unit } from './types.ts'
+import type { Intel, Observation, Order, Pos, Unit, UnitClass } from './types.ts'
 
 /**
  * ヒューリスティックAI。Observation（自軍から見えている情報）だけで判断する。
@@ -54,71 +54,131 @@ export function decideOrders(obs: Observation, rng: Rng, params: AiParams): Orde
     const seen = obs.enemies.filter((e) => e.visible)
     return obs.mine.map((u) => ({
       unitId: u.id,
-      dest: rng.pick([...reachable(map, rules, u.pos, classOf(rules, u).move).values()]).pos,
+      dest: rng.pick([...reachableFor(map, rules, u, obs.turn).values()]).pos,
       target: seen.length ? rng.pick(seen).unitId : undefined,
     }))
   }
   const known: Known[] = obs.enemies
     .map((e) => ({ ...e, age: e.visible ? 0 : obs.turn - e.turn }))
     .filter((e) => e.age <= params.memory || e.turn === 0)
-  const reserved = new Set<string>()
-  const orders: Order[] = []
-  // 射程の長いユニットから決める（良い位置を先に取る）
-  const units = [...obs.mine].sort((a, b) => classOf(rules, b).range - classOf(rules, a).range)
-  for (const u of units) {
-    const o = bestOrder(obs, u, known, reserved, rng, params)
-    reserved.add(key(o.dest))
-    orders.push(o)
+  const isSupport = (u: Unit) => classOf(rules, u).heal > 0 || classOf(rules, u).guardReduce > 0
+  const ctx: Ctx = { obs, known, reserved: new Set(), planned: new Map(obs.mine.map((u) => [u.id, u.pos])), guards: [], rng, p: params }
+  const orders = new Map<string, Order>()
+  // 1) 支援役が先に位置を決める（味方の現在位置を基準）
+  for (const u of obs.mine.filter(isSupport)) {
+    const o = bestOrder(ctx, u)
+    ctx.reserved.add(key(o.dest))
+    ctx.planned.set(u.id, o.dest)
+    if (classOf(rules, u).guardReduce > 0) ctx.guards.push(o.dest)
+    orders.set(u.id, o)
   }
-  return orders
+  // 2) 戦闘役（射程の長い順に良い位置を取る）。防護兵の隣は被弾リスクが下がる
+  for (const u of obs.mine.filter((x) => !isSupport(x)).sort((a, b) => classOf(rules, b).range - classOf(rules, a).range)) {
+    const o = bestOrder(ctx, u)
+    ctx.reserved.add(key(o.dest))
+    ctx.planned.set(u.id, o.dest)
+    orders.set(u.id, o)
+  }
+  // 3) 支援役は、確定した味方の位置で「撃つか支援か」を決め直す
+  for (const u of obs.mine.filter(isSupport)) {
+    const o = orders.get(u.id)!
+    const sup = supportValue(ctx, u, o.dest)
+    const fire = fireValue(ctx, u, o.dest)
+    orders.set(u.id, { ...o, target: sup.value >= fire.value * 1.5 * params.aggression || !fire.target ? undefined : fire.target })
+  }
+  return obs.mine.map((u) => orders.get(u.id)!)
 }
 
-function bestOrder(obs: Observation, u: Unit, known: Known[], reserved: Set<string>, rng: Rng, p: AiParams): Order {
+interface Ctx {
+  obs: Observation
+  known: Known[]
+  reserved: Set<string>
+  /** 味方の（決定済みなら予定の）位置 */
+  planned: Map<string, Pos>
+  /** 防護兵の予定位置 */
+  guards: Pos[]
+  rng: Rng
+  p: AiParams
+}
+
+/** 移動先 pos からの射撃の見込み（敵がその場に留まると仮定） */
+function fireValue(ctx: Ctx, u: Unit, pos: Pos): { value: number; target?: string } {
+  const { map, rules } = ctx.obs
+  const cls = classOf(rules, u)
+  if (dist(u.pos, pos) > cls.attackMaxMove) return { value: 0 }
+  const ar = attackRange(map, rules, u.cls, pos)
+  let value = 0
+  let target: string | undefined
+  for (const e of ctx.known) {
+    if (e.age > 0) continue
+    // 追撃持ちは、敵が多少動いても届く前提で見積もる
+    const reach = cls.pursuit ? dist(pos, e.pos) <= cls.move + 1 : canStrike(map, rules, pos, e.pos, ar)
+    if (!reach) continue
+    const ec = classOf(rules, e)
+    const hp = e.hp ?? ec.hp
+    const exp = expectedDamage(map, rules, cls, ec, cls.pursuit ? e.pos : pos, e.pos, { stationary: samePos(pos, u.pos) }) * (cls.pursuit && dist(pos, e.pos) > 1 ? 0.6 : 1)
+    const kill = exp >= hp ? 1 + ec.cost * 0.5 : 1
+    const v = Math.min(1, exp / hp) * 3 * kill * 0.6
+    if (v > value) (value = v), (target = e.unitId)
+  }
+  return { value, target }
+}
+
+/** pos にいる味方が受けそうな被ダメージ（HP比） */
+function threatAt(ctx: Ctx, cls: UnitClass, hp: number, pos: Pos): number {
+  const { map, rules } = ctx.obs
+  let threat = 0
+  for (const e of ctx.known) {
+    if (e.age > 2) continue
+    const ec = classOf(rules, e)
+    if (dist(pos, e.pos) > ec.move + ec.range + 1 + e.age) continue
+    const exp = expectedDamage(map, rules, ec, cls, e.pos, pos)
+    threat += Math.min(1.5, (exp / Math.max(1, hp)) * 3) * (e.age === 0 ? 1 : 0.5)
+  }
+  return threat
+}
+
+/** 支援（狙いなし）にした場合の価値 */
+function supportValue(ctx: Ctx, u: Unit, pos: Pos): { value: number } {
+  const { rules } = ctx.obs
+  const c = classOf(rules, u)
+  let value = 0
+  for (const a of ctx.obs.mine) {
+    if (a.id === u.id) continue
+    const ap = ctx.planned.get(a.id) ?? a.pos
+    if (chebyshev(ap, pos) > 1) continue
+    const ac = classOf(rules, a)
+    if (c.heal > 0) value += (Math.min(c.heal, ac.hp - a.hp) / 10) * 1.2
+    if (c.guardReduce > 0) value += threatAt(ctx, ac, a.hp, ap) * 0.5
+  }
+  return { value }
+}
+
+function bestOrder(ctx: Ctx, u: Unit): Order {
+  const { obs, known, rng, p } = ctx
   const { map, rules } = obs
   const cls = classOf(rules, u)
-  const threats = known.filter((e) => e.age <= 2)
-  const ideal = cls.range > 1 ? cls.range : cls.vision >= 6 ? cls.vision - 2 : 1
+  const ideal = cls.range > 1 ? cls.range : cls.vision >= 6 ? cls.vision - 2 : cls.heal > 0 || cls.guardReduce > 0 ? 3 : 1
   const isScout = cls.vision >= 6
+  const isSupport = cls.heal > 0 || cls.guardReduce > 0
 
   let best: { score: number; pos: Pos; target?: string } | null = null
-  for (const { pos } of reachable(map, rules, u.pos, cls.move).values()) {
-    if (reserved.has(key(pos))) continue
+  for (const { pos } of reachableFor(map, rules, u, obs.turn).values()) {
+    if (ctx.reserved.has(key(pos))) continue
     const t = terrain(map, rules, pos)
-    const canFire = dist(u.pos, pos) <= cls.attackMaxMove
-    const ar = canFire ? attackRange(map, rules, u.cls, pos) : 0
+    const fire = fireValue(ctx, u, pos)
+    const sup = isSupport ? supportValue(ctx, u, pos).value : 0
 
-    // 射撃機会：最近見た敵がその場に留まると仮定
-    let fire = 0
-    let target: string | undefined
-    if (canFire) {
-      for (const e of known) {
-        if (e.age > 0) continue
-        if (!canStrike(map, rules, pos, e.pos, ar)) continue
-        const ec = classOf(rules, e)
-        const hp = e.hp ?? ec.hp
-        const exp = expectedDamage(map, rules, cls, ec, pos, e.pos)
-        const kill = exp >= hp ? 1 + ec.cost * 0.5 : 1
-        const v = Math.min(1, exp / hp) * 3 * kill * 0.6
-        if (v > fire) (fire = v), (target = e.unitId)
-      }
-    }
-
-    // 被弾リスク：敵が移動して射程に入れられるか
-    // 遮蔽を考慮：敵の現在位置から見た自分の隠れ具合で期待被ダメージが下がる
-    let threat = 0
-    for (const e of threats) {
-      const ec = classOf(rules, e)
-      if (dist(pos, e.pos) > ec.move + ec.range + 1 + e.age) continue
-      const exp = expectedDamage(map, rules, ec, cls, e.pos, pos)
-      threat += Math.min(1.5, (exp / u.hp) * 3) * (e.age === 0 ? 1 : 0.5)
-    }
+    // 被弾リスク（遮蔽込み）。防護兵の隣なら軽減
+    let threat = threatAt(ctx, cls, u.hp, pos)
+    if (!isSupport && ctx.guards.some((g) => chebyshev(g, pos) <= 1)) threat *= 0.5
 
     // 索敵：敵の（最終）位置を視界に収める
     let scout = 0
     for (const e of known) if (canSee(map, rules, u.cls, pos, e.pos)) scout += e.age === 0 ? 0.5 : 1
     if (isScout) scout *= 1.5
 
-    // 詰め寄り：近接ユニットは射手の懐（隣接）を目指す。射手は近接に寄られる位置を嫌う
+    // 詰め寄り / 回避
     let rush = 0
     let evade = 0
     for (const e of known) {
@@ -138,15 +198,20 @@ function bestOrder(obs: Observation, u: Unit, known: Known[], reserved: Set<stri
     for (const e of known) nearest = Math.min(nearest, dist(pos, e.pos) + e.age * 0.5)
     const progress = Number.isFinite(nearest) ? -Math.abs(nearest - ideal) * 0.4 : 0
 
+    // 支援役は味方の近くにいたい
+    let cohesion = 0
+    if (isSupport) for (const [id, ap] of ctx.planned) if (id !== u.id && chebyshev(ap, pos) <= 1) cohesion += 0.4
+
     const roof = t.visionBonus > 0 && (cls.range > 1 || isScout) ? 1 + visionRange(map, rules, u.cls, pos) * 0.05 : 0
+    const action = Math.max(fire.value * 1.5, sup)
     const score =
-      p.aggression * (fire * 1.5 + progress) - p.caution * threat * 0.6 + p.scouting * scout + p.roofPref * roof + p.rush * rush + p.evade * evade + rng.next() * p.noise
-    if (!best || score > best.score) best = { score, pos, target }
+      p.aggression * (action + progress) - p.caution * threat * 0.6 + p.scouting * scout + p.roofPref * roof + p.rush * rush + p.evade * evade + cohesion + rng.next() * p.noise
+    if (!best || score > best.score) best = { score, pos, target: sup > fire.value * 1.5 ? undefined : fire.target }
   }
   const dest = best?.pos ?? { ...u.pos }
-  // 射程内に見込みがなければ、最も近い視認中の敵を狙っておく（相手が寄ってくれば当たる）
+  // 射程内に見込みがなければ、最も近い視認中の敵を狙っておく（相手が寄ってくれば当たる）。支援役は除く
   let target = best?.target
-  if (!target) {
+  if (!target && !isSupport) {
     const vis = known.filter((e) => e.age === 0).sort((a, b) => dist(dest, a.pos) - dist(dest, b.pos))
     target = vis[0]?.unitId
   }

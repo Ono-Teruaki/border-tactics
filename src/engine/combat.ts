@@ -25,15 +25,30 @@ export function coverFrom(map: MapDef, from: Pos, target: Pos): CoverLevel {
   return 'none'
 }
 
-/** 1発あたりの命中率（%）。距離による減衰・遮蔽・高低差 */
-export function hitChance(map: MapDef, rules: RulesConfig, cls: UnitClass, from: Pos, target: Pos): { chance: number; cover: CoverLevel } {
+export interface HitOpts {
+  /** 撃ち手がこの手で移動していない（狙撃態勢） */
+  stationary?: boolean
+  /** 対象がマークされている */
+  marked?: boolean
+  /** 撃ち手が制圧されている */
+  suppressed?: boolean
+}
+
+/** 1発あたりの命中率（%）。距離による減衰・懐・遮蔽・高低差・スキル */
+export function hitChance(map: MapDef, rules: RulesConfig, cls: UnitClass, from: Pos, target: Pos, opts: HitOpts = {}): { chance: number; cover: CoverLevel } {
   const c = rules.combat
+  const sk = rules.skills
   const d = dist(from, target)
+  const steady = cls.steadyAim && !!opts.stationary
   let p = cls.accuracy - cls.falloff * Math.max(0, d - 1)
   if (d <= 1) p -= cls.closePenalty
+  if (steady) p += sk.steadyAcc
+  if (opts.marked) p += sk.markAccBonus
+  if (opts.suppressed) p -= sk.suppressAcc
   const cover = coverFrom(map, from, target)
-  if (cover === 'half') p -= c.coverHalf
-  if (cover === 'light') p -= c.coverLight
+  const coverMul = steady ? 0.5 : 1
+  if (cover === 'half') p -= c.coverHalf * coverMul
+  if (cover === 'light') p -= c.coverLight * coverMul
   const fromRoof = terrainId(map, from) === 'building'
   const toRoof = terrainId(map, target) === 'building'
   if (fromRoof && !toRoof) p += c.highGround
@@ -52,8 +67,8 @@ export function rollDamage(rules: RulesConfig, atk: number, def: number, rng: Rn
 }
 
 /** 期待ダメージ（AI・UI予測用） */
-export function expectedDamage(map: MapDef, rules: RulesConfig, atkCls: UnitClass, defCls: UnitClass, from: Pos, target: Pos): number {
-  const { chance } = hitChance(map, rules, atkCls, from, target)
+export function expectedDamage(map: MapDef, rules: RulesConfig, atkCls: UnitClass, defCls: UnitClass, from: Pos, target: Pos, opts: HitOpts = {}): number {
+  const { chance } = hitChance(map, rules, atkCls, from, target, opts)
   return (chance / 100) * atkCls.shots * Math.max(1, baseDamage(atkCls.atk, defCls.def))
 }
 

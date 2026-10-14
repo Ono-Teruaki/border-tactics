@@ -5,13 +5,27 @@ import { MAPS } from '../engine/maps.ts'
 import { RECORD_VERSION, type GameRecord } from '../engine/record.ts'
 import { seedStreams, type Rng } from '../engine/rng.ts'
 import { DEFAULT_RULES } from '../engine/rules.ts'
-import type { GameEvent, GameState, Intel, MapDef, Order, Pos, StrikeBlock, Unit, VictoryMode } from '../engine/types.ts'
+import type { GameEvent, GameState, Intel, MapDef, Order, Pos, StrikeBlock, Unit, UnitClass, VictoryMode } from '../engine/types.ts'
 import { Board3D, type PieceSpec, type PlanSpec, type TileMark } from './board3d.ts'
 import { damageRange, hitChance } from '../engine/combat.ts'
 
 const rules = DEFAULT_RULES
 const root = document.querySelector<HTMLDivElement>('#app')!
 const MODE_LABEL: Record<VictoryMode, string> = { annihilation: '全滅', killCount: '撃破数', killCost: '撃破コスト' }
+/** クラスのパッシブスキル説明 */
+function skillText(c: UnitClass): string {
+  const t: string[] = []
+  if (c.pursuit) t.push('追撃: 狙った敵の移動先に詰める')
+  if (c.markOnSight) t.push('観測: 見た敵をマーク（次の手まで味方から見え、命中+10）')
+  if (c.sonar) t.push(`透視: ${c.sonar}マス以内は建物越しに見える`)
+  if (c.suppress) t.push('制圧射撃: 2発以上当てた敵の移動-1・命中-15')
+  if (c.steadyAim) t.push('狙撃態勢: 動かなければ命中+15・遮蔽半減')
+  if (c.heal) t.push(`応急手当: 狙わない手は周囲8マスの味方を${c.heal}回復`)
+  if (c.guardReduce) t.push(`カバーリング: 狙わない手は周囲8マスの味方の被弾を肩代わり（-${Math.round(c.guardReduce * 100)}%）`)
+  if (c.closePenalty) t.push(`懐に弱い: 隣接した敵への命中-${c.closePenalty}`)
+  return t.join(' ／ ')
+}
+
 const BLOCK_LABEL: Record<StrikeBlock, string> = {
   range: '射程外',
   blocked: '射線上にビル',
@@ -65,9 +79,13 @@ export function showSetup() {
           ...Object.values(rules.classes).map((c) =>
             h(
               'button',
-              { class: 'classcard', onclick: () => (comp.length < rules.teamSize && comp.push(c.id), render()) },
+              {
+                class: 'classcard',
+                onclick: () => (comp.length < rules.teamSize && comp.filter((x) => x === c.id).length < rules.skills.maxPerClass && comp.push(c.id), render()),
+              },
               h('span', { class: 'pico' }, c.short),
               h('b', {}, c.name),
+              h('small', { class: 'skill' }, skillText(c)),
               h(
                 'small',
                 {},
@@ -236,7 +254,7 @@ class Battle {
         this.orders.set(sel.id, { unitId: sel.id, dest: this.destOf(sel), target: cur?.target === enemy.unitId ? undefined : enemy.unitId })
         return this.render()
       }
-      const reach = reachableFor(this.map, rules, sel)
+      const reach = reachableFor(this.map, rules, sel, this.state.turn)
       const plannedHere = mine.some((u) => u.id !== sel.id && samePos(this.destOf(u), p))
       if (reach.has(key(p)) && !plannedHere) {
         this.orders.set(sel.id, { unitId: sel.id, dest: p, target: this.orders.get(sel.id)?.target })
@@ -313,7 +331,7 @@ class Battle {
     }
     const sel = mine.find((u) => u.id === this.selected)
     if (sel) {
-      for (const { pos } of reachableFor(this.map, rules, sel).values()) mark(pos, 'reach')
+      for (const { pos } of reachableFor(this.map, rules, sel, this.state.turn).values()) mark(pos, 'reach')
       const dest = this.destOf(sel)
       if (canFireAfterMove(rules, sel, dest)) {
         const ar = attackRange(this.map, rules, sel.cls, dest)
@@ -414,7 +432,7 @@ class Battle {
     }
 
     // ① 移動：味方 → 見えた敵 の順に1体ずつ。干渉（弾かれ）は最後にまとめて同時に見せる
-    const moves = events.filter((e): e is Extract<GameEvent, { type: 'move' }> => e.type === 'move')
+    const moves = events.filter((e): e is Extract<GameEvent, { type: 'move' | 'pursuit' }> => e.type === 'move' || e.type === 'pursuit')
     const shownMoves = [...moves.filter((e) => isMine(e.unitId)), ...moves.filter((e) => !isMine(e.unitId) && enemySeen(e.unitId))]
     for (const e of shownMoves) {
       if (!isMine(e.unitId)) {
@@ -422,7 +440,7 @@ class Battle {
         show()
       }
       const from = disp.get(e.unitId)!.pos
-      this.caption(`${this.name(e.unitId)} 移動`)
+      this.caption(`${this.name(e.unitId)} ${e.type === 'pursuit' ? '追撃！' : '移動'}`)
       await this.board.focus([from, e.to], 380)
       await this.board.movePiece(e.unitId, e.to)
       disp.get(e.unitId)!.pos = e.to
@@ -456,6 +474,15 @@ class Battle {
         show()
         const a = classOf(rules, unitOf(e.unitId))
         const hits = e.shots.filter((x) => x.hit).length
+        const guarded = e.shots.find((x) => x.guardedBy)?.guardedBy
+        if (guarded) {
+          if (!isMine(guarded) && !disp.get(guarded)) reveal(guarded, unitOf(guarded).pos)
+          const g = disp.get(guarded)
+          if (g) {
+            this.board.popup(g.pos, '庇う', '#2f6fec', 900)
+            g.hp = Math.max(0, (g.hp ?? unitOf(guarded).hp) - e.shots.filter((x) => x.guardedBy).reduce((a, x) => a + x.damage, 0))
+          }
+        }
         this.caption(
           `${this.name(e.unitId)}（速${a.spd}）→ ${this.name(e.hitId)}　命中率${e.chance}%${e.cover !== 'none' ? `（遮蔽:${e.cover === 'half' ? '半' : '小'}）` : ''}${e.shots.length > 1 ? `　${hits}/${e.shots.length}発` : ''}`,
         )
@@ -472,6 +499,28 @@ class Battle {
         const t = disp.get(e.hitId)
         if (t) t.hp = e.targetHp
         show()
+      } else if (e.type === 'mark' && isMine(e.unitId)) {
+        this.caption(`${this.name(e.unitId)} 観測：${e.targets.map((t) => this.name(t)).join('・')} をマーク`)
+        for (const t of e.targets) {
+          if (!disp.get(t)) reveal(t, unitOf(t).pos)
+          this.board.popup(disp.get(t)?.pos ?? unitOf(t).pos, 'MARK', '#1f9d55', 900)
+        }
+        show()
+        await this.board.wait(500)
+      } else if (e.type === 'suppress') {
+        const t = disp.get(e.targetId)
+        if (t) await this.board.popup(t.pos, '制圧', '#c07a00', 700)
+      } else if (e.type === 'heal' && isMine(e.unitId)) {
+        this.caption(`${this.name(e.unitId)} 応急手当`)
+        for (const t of e.targets) {
+          const d = disp.get(t.id)
+          if (d) {
+            d.hp = (d.hp ?? 0) + t.amount
+            this.board.popup(d.pos, `+${t.amount}`, '#1f9d55', 900)
+          }
+        }
+        show()
+        await this.board.wait(600)
       } else if (e.type === 'noshot' && isMine(e.unitId)) {
         const u = unitOf(e.unitId)
         this.caption(`${this.name(e.unitId)} 撃てず：${BLOCK_LABEL[e.reason]}`)

@@ -1,4 +1,6 @@
-# Border Tactics 設計メモ（v0.6）
+# Border Tactics 設計メモ（v0.7）
+
+- スキル・新ユニット・死角の仕様とメタ分析は [SKILLS.md](SKILLS.md) を参照
 
 - UIは白基調・チェス盤風の3D（three.js）。ピンチ・ホイール・ボタンでズームでき、ズーム中はドラッグで移動できる
 - v0.1 のルールは `git tag v0.1` に残しています

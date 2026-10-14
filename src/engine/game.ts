@@ -11,7 +11,7 @@ export function createGame(map: MapDef, rules: RulesConfig, comps: [string[], st
     comp.forEach((cls, i) => {
       const c = rules.classes[cls]
       if (!c) throw new Error(`unknown class ${cls}`)
-      units.push({ id: `${side}-${i}`, side, cls, pos: { ...map.spawns[side][i] }, hp: c.hp, alive: true })
+      units.push({ id: `${side}-${i}`, side, cls, pos: { ...map.spawns[side][i] }, hp: c.hp, alive: true, markedUntil: 0, suppressedUntil: 0, markCooldownUntil: 0 })
     })
   }
   const state: GameState = { map, rules, units, turn: 1, kills: [0, 0], killCost: [0, 0], intel: [{}, {}], over: false, history: [] }
@@ -24,6 +24,8 @@ export function createGame(map: MapDef, rules: RulesConfig, comps: [string[], st
 }
 
 export const classOf = (rules: RulesConfig, u: { cls: string }): UnitClass => rules.classes[u.cls]
+/** 周囲8マス判定用の距離 */
+export const chebyshev = (a: Pos, b: Pos) => Math.max(Math.abs(a.x - b.x), Math.abs(a.y - b.y))
 
 export function attackRange(map: MapDef, rules: RulesConfig, cls: string, at: Pos): number {
   return rules.classes[cls].range + terrain(map, rules, at).rangeBonus
@@ -33,10 +35,21 @@ export function visionRange(map: MapDef, rules: RulesConfig, cls: string, at: Po
   return rules.classes[cls].vision + terrain(map, rules, at).visionBonus
 }
 
-/** at にいる cls のユニットから target のマスが見えるか */
+/**
+ * at にいる cls のユニットから target のマスが見えるか。
+ * - 透視（sonar）の距離以内は無条件で見える
+ * - 視界距離・視線（ビル）
+ * - 死角: 屋上からでも、ビルの裏側に張り付いた地上のマスは見えない
+ */
 export function canSee(map: MapDef, rules: RulesConfig, cls: string, at: Pos, target: Pos): boolean {
-  if (dist(at, target) > visionRange(map, rules, cls, at)) return false
-  return lineOfSight(map, rules, at, target, terrain(map, rules, at).seesOverBlockers)
+  const d = dist(at, target)
+  const c = rules.classes[cls]
+  if (c.sonar > 0 && d <= c.sonar) return true
+  if (d > visionRange(map, rules, cls, at)) return false
+  const fromRoof = terrainId(map, at) === 'building'
+  if (!lineOfSight(map, rules, at, target, terrain(map, rules, at).seesOverBlockers)) return false
+  if (rules.vision.deadZone && fromRoof && d > 1 && isWallHugging(map, at, target)) return false
+  return true
 }
 
 /**
@@ -67,23 +80,31 @@ export function isWallHugging(map: MapDef, from: Pos, target: Pos): boolean {
   return sides.some((n) => inBounds(map, n) && terrainId(map, n) === 'building')
 }
 
-export function visibleEnemyIds(state: GameState, side: Side): Set<string> {
+/** side から見えている敵。マークされた敵は視線がなくても見える（atTurn 時点で有効なマーク） */
+export function visibleEnemyIds(state: GameState, side: Side, atTurn = state.turn): Set<string> {
   const { map, rules } = state
   const mine = state.units.filter((u) => u.alive && u.side === side)
   const out = new Set<string>()
   for (const e of state.units) {
     if (!e.alive || e.side === side) continue
-    if (mine.some((m) => canSee(map, rules, m.cls, m.pos, e.pos))) out.add(e.id)
+    if (e.markedUntil >= atTurn || mine.some((m) => canSee(map, rules, m.cls, m.pos, e.pos))) out.add(e.id)
   }
   return out
 }
 
-export function reachableFor(map: MapDef, rules: RulesConfig, u: Unit) {
-  return reachable(map, rules, u.pos, classOf(rules, u).move)
+export const isSuppressed = (u: { suppressedUntil: number }, turn: number) => u.suppressedUntil >= turn
+export const isMarked = (u: { markedUntil: number }, turn: number) => u.markedUntil >= turn
+
+export function moveOf(rules: RulesConfig, u: Unit, turn: number): number {
+  return Math.max(0, classOf(rules, u).move - (isSuppressed(u, turn) ? rules.skills.suppressMove : 0))
+}
+
+export function reachableFor(map: MapDef, rules: RulesConfig, u: Unit, turn: number) {
+  return reachable(map, rules, u.pos, moveOf(rules, u, turn))
 }
 
 export function isValidDest(state: GameState, u: Unit, dest: Pos): boolean {
-  return reachableFor(state.map, state.rules, u).has(key(dest))
+  return reachableFor(state.map, state.rules, u, state.turn).has(key(dest))
 }
 
 /** この移動をしても攻撃できるか（スナイパーの移動制限） */
@@ -94,7 +115,8 @@ export function canFireAfterMove(rules: RulesConfig, u: Unit, dest: Pos): boolea
 function updateIntel(state: GameState) {
   for (const side of [0, 1] as Side[]) {
     const intel = state.intel[side]
-    const vis = visibleEnemyIds(state, side)
+    // 次の手の命令時点で有効なマークで判定する
+    const vis = visibleEnemyIds(state, side, state.turn + 1)
     for (const e of state.units) {
       if (e.side === side) continue
       if (!e.alive) {
@@ -115,39 +137,54 @@ function reveal(state: GameState, toSide: Side, u: Unit, turn: number) {
   state.intel[toSide][u.id] = { unitId: u.id, cls: u.cls, pos: { ...u.pos }, hp: prev?.hp ?? null, turn, visible: false }
 }
 
+function defeat(state: GameState, u: Unit, events: GameEvent[]) {
+  u.hp = 0
+  u.alive = false
+  const other = (1 - u.side) as Side
+  state.kills[other] += 1
+  state.killCost[other] += classOf(state.rules, u).cost
+  events.push({ type: 'bailout', unitId: u.id, at: { ...u.pos } })
+}
+
 /**
- * 1ターンを同時解決する（state を直接更新）。
- * 1) 移動: 全員が同時に目的地へ。同じマスに複数が来たら、移動してきた側が元の位置へ弾かれる（連鎖も解決）。
- *    すれ違い・入れ替わりは許可（経路は問わない）。
- * 2) 射撃: 速の高い順に解決。指定した敵が移動後に見えていて（sharedTargeting なら味方の視界でも可）
- *    射程・射線・遮蔽をクリアしていれば、弾数ぶん命中判定（距離・隠れ具合で命中率が下がる）。
- *    ダメージ = 攻² / (攻 + 守) × 乱数。HP0 で即ベイルアウトし、まだ撃っていなければ撃てない。
- * 3) 攻撃した位置は相手に露見。
+ * 1手を同時解決する（state を直接更新）。
+ * 1) 移動: 追撃の補正 → 全員が同時に目的地へ。同じマスに複数が来たら、移動してきた側が元の位置へ弾かれる（連鎖も解決）
+ * 2) 観測: スカウトが視界内の敵にマーク
+ * 3) 交戦: 速の高い順に1体ずつ。防護兵（支援中）が周囲の味方への命中弾を肩代わり。ガンナーの制圧
+ * 4) 支援: 衛生兵（支援中）が周囲の味方を回復
+ * 5) 攻撃した位置は相手に露見
+ * 「支援中」= 狙いを指定しなかったユニット
  */
 export function resolveTurn(state: GameState, orders: [Order[], Order[]], rng: Rng): GameEvent[] {
   if (state.over) return []
   const { map, rules } = state
+  const T = state.turn
   const events: GameEvent[] = []
   const alive = state.units.filter((u) => u.alive)
+  const orderOf = (u: Unit) => orders[u.side].find((x) => x.unitId === u.id)
+  const supporting = (u: Unit) => !orderOf(u)?.target
   const origin = new Map<string, Pos>()
   const proposed = new Map<string, Pos>()
   for (const u of alive) {
-    const o = orders[u.side].find((x) => x.unitId === u.id)
+    const o = orderOf(u)
     origin.set(u.id, { ...u.pos })
     proposed.set(u.id, o && isValidDest(state, u, o.dest) ? { ...o.dest } : { ...u.pos })
   }
 
   // --- 追撃: pursuit を持つユニットは、狙った敵の移動先の隣へ（届く範囲で）行き先を変える ---
+  const pursued = new Set<string>()
   for (const u of alive) {
     if (!classOf(rules, u).pursuit) continue
-    const targetId = orders[u.side].find((x) => x.unitId === u.id)?.target
-    const t = alive.find((e) => e.id === targetId && e.side !== u.side)
+    const t = alive.find((e) => e.id === orderOf(u)?.target && e.side !== u.side)
     if (!t) continue
     const tp = proposed.get(t.id)!
     const want = proposed.get(u.id)!
-    const cands = [...reachableFor(map, rules, u).values()].filter((r) => !samePos(r.pos, tp))
+    const cands = [...reachableFor(map, rules, u, T).values()].filter((r) => !samePos(r.pos, tp))
     cands.sort((a, b) => dist(a.pos, tp) - dist(b.pos, tp) || dist(a.pos, want) - dist(b.pos, want) || a.cost - b.cost)
-    if (cands.length && dist(cands[0].pos, tp) < dist(want, tp)) proposed.set(u.id, { ...cands[0].pos })
+    if (cands.length && dist(cands[0].pos, tp) < dist(want, tp)) {
+      proposed.set(u.id, { ...cands[0].pos })
+      pursued.add(u.id)
+    }
   }
 
   // --- 移動（衝突解決） ---
@@ -178,18 +215,34 @@ export function resolveTurn(state: GameState, orders: [Order[], Order[]], rng: R
     const to = proposed.get(u.id)!
     const from = origin.get(u.id)!
     if (bounced.has(u.id)) events.push({ type: 'bounce', unitId: u.id, at: { ...to }, contact: contact.has(u.id) })
-    else if (!samePos(from, to)) events.push({ type: 'move', unitId: u.id, from, to: { ...to } })
+    else if (!samePos(from, to)) events.push(pursued.has(u.id) ? { type: 'pursuit', unitId: u.id, from, to: { ...to } } : { type: 'move', unitId: u.id, from, to: { ...to } })
     u.pos = { ...to }
   }
   if (rules.bumpReveals) {
-    for (const u of alive) if (contact.has(u.id)) reveal(state, (1 - u.side) as Side, u, state.turn)
+    for (const u of alive) if (contact.has(u.id)) reveal(state, (1 - u.side) as Side, u, T)
   }
 
-  // --- 射撃: 速の高い順に1体ずつ解決。撃つ前にベイルアウトしたユニットは撃てない ---
+  // --- 観測: スカウトが視界内の敵にマーク ---
+  const sk = rules.skills
+  for (const u of alive) {
+    const c = classOf(rules, u)
+    if (!c.markOnSight || u.markCooldownUntil >= T) continue
+    const seen = alive
+      .filter((e) => e.side !== u.side && canSee(map, rules, u.cls, u.pos, e.pos))
+      .sort((a, b) => dist(u.pos, a.pos) - dist(u.pos, b.pos))
+      .slice(0, sk.markPerTurn)
+    if (!seen.length) continue
+    for (const e of seen) e.markedUntil = Math.max(e.markedUntil, T + sk.markDuration)
+    if (sk.markCooldown > 0) u.markCooldownUntil = T + sk.markCooldown
+    events.push({ type: 'mark', unitId: u.id, targets: seen.map((e) => e.id) })
+  }
+
+  // --- 交戦: 速の高い順に1体ずつ解決。撃つ前に撃破されたユニットは撃てない ---
   const teamVis: [Set<string>, Set<string>] = [visibleEnemyIds(state, 0), visibleEnemyIds(state, 1)]
   const attackers: Unit[] = []
+  const guardUsed = new Map<string, number>()
   const queue = alive
-    .map((u) => ({ u, targetId: orders[u.side].find((x) => x.unitId === u.id)?.target, init: classOf(rules, u).spd + rng.next() * rules.combat.initiativeJitter }))
+    .map((u) => ({ u, targetId: orderOf(u)?.target, init: classOf(rules, u).spd + rng.next() * rules.combat.initiativeJitter }))
     .filter((q): q is { u: Unit; targetId: string; init: number } => !!q.targetId)
     .sort((a, b) => b.init - a.init)
   for (const { u, targetId } of queue) {
@@ -206,15 +259,47 @@ export function resolveTurn(state: GameState, orders: [Order[], Order[]], rng: R
       continue
     }
     const tc = classOf(rules, t)
-    const { chance, cover } = hitChance(map, rules, cls, u.pos, t.pos)
+    const { chance, cover } = hitChance(map, rules, cls, u.pos, t.pos, {
+      stationary: samePos(origin.get(u.id)!, u.pos),
+      marked: isMarked(t, T),
+      suppressed: isSuppressed(u, T),
+    })
     const shots: ShotResult[] = []
+    const downed: Unit[] = []
     for (let i = 0; i < cls.shots && t.hp > 0; i++) {
       const hit = rng.next() * 100 < chance
-      const dmg = hit ? rollDamage(rules, cls.atk, tc.def, rng) : 0
-      t.hp -= dmg
-      shots.push({ hit, damage: dmg })
+      if (!hit) {
+        shots.push({ hit, damage: 0 })
+        continue
+      }
+      // カバーリング: 支援中の防護兵が周囲8マスにいれば肩代わり
+      const guard = alive
+        .filter(
+          (g) =>
+            g.alive &&
+            g.side === t.side &&
+            g.id !== t.id &&
+            classOf(rules, g).guardReduce > 0 &&
+            supporting(g) &&
+            chebyshev(g.pos, t.pos) <= 1 &&
+            (guardUsed.get(g.id) ?? 0) < rules.skills.guardHitsPerTurn,
+        )
+        .sort((a, b) => b.hp - a.hp)[0]
+      if (guard) {
+        const gc = classOf(rules, guard)
+        guardUsed.set(guard.id, (guardUsed.get(guard.id) ?? 0) + 1)
+        const dmg = Math.max(1, Math.round(rollDamage(rules, cls.atk, gc.def, rng) * (1 - gc.guardReduce)))
+        guard.hp -= dmg
+        shots.push({ hit, damage: dmg, guardedBy: guard.id })
+        if (guard.hp <= 0) downed.push(guard), (guard.alive = false)
+      } else {
+        const dmg = rollDamage(rules, cls.atk, tc.def, rng)
+        t.hp -= dmg
+        shots.push({ hit, damage: dmg })
+      }
     }
-    const total = shots.reduce((a, x) => a + x.damage, 0)
+    const direct = shots.filter((x) => x.hit && !x.guardedBy)
+    const total = direct.reduce((a, x) => a + x.damage, 0)
     events.push({
       type: 'attack',
       unitId: u.id,
@@ -229,16 +314,33 @@ export function resolveTurn(state: GameState, orders: [Order[], Order[]], rng: R
       spotted: !canSee(map, rules, u.cls, u.pos, t.pos),
     })
     attackers.push(u)
-    if (t.hp <= 0) {
-      t.hp = 0
-      t.alive = false
-      const other = (1 - t.side) as Side
-      state.kills[other] += 1
-      state.killCost[other] += tc.cost
-      events.push({ type: 'bailout', unitId: t.id, at: { ...t.pos } })
+    if (cls.suppress && shots.filter((x) => x.hit).length >= 2 && t.hp > 0) {
+      t.suppressedUntil = Math.max(t.suppressedUntil, T + 1)
+      events.push({ type: 'suppress', unitId: u.id, targetId: t.id })
     }
+    for (const g of downed) {
+      g.alive = true
+      defeat(state, g, events)
+    }
+    if (t.hp <= 0) defeat(state, t, events)
   }
-  if (rules.attackReveals) for (const u of attackers) reveal(state, (1 - u.side) as Side, u, state.turn)
+
+  // --- 支援: 衛生兵の回復 ---
+  for (const u of alive) {
+    const c = classOf(rules, u)
+    if (!u.alive || c.heal <= 0 || !supporting(u)) continue
+    const healed: { id: string; amount: number }[] = []
+    for (const a of alive) {
+      if (!a.alive || a.side !== u.side || a.id === u.id || chebyshev(a.pos, u.pos) > 1) continue
+      const amount = Math.min(c.heal, classOf(rules, a).hp - a.hp)
+      if (amount <= 0) continue
+      a.hp += amount
+      healed.push({ id: a.id, amount })
+    }
+    if (healed.length) events.push({ type: 'heal', unitId: u.id, targets: healed })
+  }
+
+  if (rules.attackReveals) for (const u of attackers) reveal(state, (1 - u.side) as Side, u, T)
 
   state.history.push(events)
   updateIntel(state)

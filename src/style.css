@@ -120,7 +120,10 @@ button:disabled {
   column-gap: 10px;
 }
 .classcard .pico {
-  grid-row: span 2;
+  grid-row: span 3;
+}
+.classcard small.skill {
+  color: #1f7a4a;
 }
 .classcard small {
   color: var(--muted);
