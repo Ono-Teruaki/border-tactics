@@ -1,0 +1,16 @@
+SRXB vs AGJX --search --variant sim/variants/binder-noskill.json: 62.5%
+SRXB vs AGJX --search: 63.7%
+SRXB vs AGJX --search --variant sim/variants/binder-range1-noskill.json: 64.2%
+SRXB vs AGJX --search --variant sim/variants/binder-range1.json: 65.4%
+SRXB vs SRXD --search: 80.4%
+SRXB vs SRXD --search --variant sim/variants/binder-range1-noskill.json: 72.1%
+SRXB vs SRXD --search --variant sim/variants/binder-noskill.json: 75.0%
+SRXB vs SRXD --search --variant sim/variants/binder-range1.json: 73.3%
+AGXV vs SRXD --search --variant sim/variants/screener-noskill.json: 48.3%
+GSJV vs AGJX --search --variant sim/variants/screener-noskill.json: 72.5%
+AGXV vs SRXD --search --variant sim/variants/veil-r2.json: 58.8%
+AGXV vs SRXD --search: 55.8%
+AGXV vs SRXD --search --variant sim/variants/veil-d0.json: 55.4%
+GSJV vs AGJX --search: 70.8%
+GSJV vs AGJX --search --variant sim/variants/veil-r2.json: 70.4%
+GSJV vs AGJX --search --variant sim/variants/veil-d0.json: 70.8%
