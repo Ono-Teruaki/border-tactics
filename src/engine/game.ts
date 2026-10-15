@@ -148,6 +148,7 @@ export const isJammed = (u: { jammedUntil: number }, turn: number) => u.jammedUn
 const jamOf = (rules: RulesConfig, u: Unit, turn: number) => (isJammed(u, turn) ? rules.skills.jamVision : 0)
 
 export function moveOf(rules: RulesConfig, u: Unit, turn: number): number {
+  if ((u.rootedUntil ?? 0) >= turn) return 0
   return Math.max(0, classOf(rules, u).move - (isSuppressed(u, turn) ? rules.skills.suppressMove : 0))
 }
 
@@ -394,8 +395,15 @@ export function resolveTurn(state: GameState, orders: [Order[], Order[]], rng: R
       }
       const from = { ...t.pos }
       t.pos = { ...to }
-      events.push({ type: 'bind', unitId: u.id, targetId: t.id, from, to: { ...to } })
+      if (rules.skills.bindRoot) t.rootedUntil = T + 1
+      let damage: number | undefined
+      if (rules.skills.bindDamage) {
+        damage = rollDamage(rules, cls.atk, classOf(rules, t).def, rng, cls.pen)
+        t.hp -= damage
+      }
+      events.push({ type: 'bind', unitId: u.id, targetId: t.id, from, to: { ...to }, ...(damage ? { damage, targetHp: Math.max(0, t.hp) } : {}) })
       attackers.push(u)
+      if (t.hp <= 0) defeat(state, t, events)
       continue
     }
     const tc = classOf(rules, t)

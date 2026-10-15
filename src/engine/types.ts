@@ -168,6 +168,10 @@ export interface RulesConfig {
     veilRadius: number
     /** 遮蔽フィールドが残る手数（1 = 張った手と次の手） */
     veilDuration: number
+    /** 捕縛した敵は次の手、移動できない */
+    bindRoot: boolean
+    /** 捕縛した敵に、着地で捕縛師の攻撃1発ぶんのダメージ */
+    bindDamage: boolean
   }
   vision: {
     /** 屋上から見ても、ビルの裏側に張り付いた地上のマスは見えない */
@@ -210,6 +214,8 @@ export interface Unit {
   stealthUntil: number
   /** この手まで妨害されている（視界・命中率が下がる） */
   jammedUntil: number
+  /** 捕縛で足止めされている（この手まで移動できない） */
+  rootedUntil?: number
 }
 
 /** 命令: 移動先と、狙う敵（任意）。移動後に射程・射線が通り、見えていれば撃つ */
@@ -267,7 +273,7 @@ export type GameEvent =
   /** 狙ったが撃てなかった */
   | { type: 'noshot'; unitId: string; targetId: string; reason: StrikeBlock }
   /** 捕縛: 捕縛師が targetId を from から to（捕縛師の移動前のマス）へ放り投げた */
-  | { type: 'bind'; unitId: string; targetId: string; from: Pos; to: Pos }
+  | { type: 'bind'; unitId: string; targetId: string; from: Pos; to: Pos; damage?: number; targetHp?: number }
   /** 遮蔽フィールドを張った */
   | { type: 'veil'; unitId: string; at: Pos; cells: Pos[] }
   /** 曲射の着弾（マスを狙う）。hits は直撃と爆風で当たった敵 */
