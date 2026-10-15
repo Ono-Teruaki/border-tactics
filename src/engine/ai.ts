@@ -309,7 +309,11 @@ function supportValue(ctx: Ctx, u: Unit, pos: Pos): { value: number; at?: Pos } 
       }
     }
     let best: { value: number; at?: Pos } = { value: 0 }
-    if (!inLanes.length) return best
+    if (!inLanes.length || !foes.length) return best
+    // 攻めるときだけ張る: 味方と最寄りの敵の距離の平均が、この手で縮むとき（守りに張ると、近づく敵まで隠してしまう）
+    const near = (p: Pos) => Math.min(...foes.map(({ e }) => dist(p, e.pos)))
+    const advance = allies.reduce((s, { a, ap }) => s + near(a.pos) - near(ap), 0) / allies.length
+    if (advance < 1) return best
     for (let y = pos.y - sk.veilRange; y <= pos.y + sk.veilRange; y++)
       for (let x = pos.x - sk.veilRange; x <= pos.x + sk.veilRange; x++) {
         const at = { x, y }
@@ -320,6 +324,8 @@ function supportValue(ctx: Ctx, u: Unit, pos: Pos): { value: number; at?: Pos } 
         let v = 0
         for (const l of inLanes) if (!lineOfSight(vm, rules, l.from, l.to)) v += l.v * 0.6
         for (const l of outLanes) if (!lineOfSight(vm, rules, l.from, l.to)) v -= l.v * 0.6
+        // 敵が入り込んで隠れられる幕は損（特に近接）
+        for (const { e, ec } of foes) if (chebyshev(e.pos, at) <= sk.veilRadius + ec.move) v -= ec.range <= 1 ? 0.9 : 0.4
         if (v > best.value) best = { value: v, at }
       }
     return best
